@@ -16,6 +16,94 @@ A test DMG is included for quick installation:
 
 Open the DMG and drag `NALA-AudiO-ViZuLiZeR.app` into `Applications`.
 
+## Quick Start
+
+1. Drag an audio file into the app, or double-click the audio area and choose `mp3`, `wav`, `flac`, `aac`, or `m4a`.
+2. Drag a cover image into the app, or double-click the image area and choose `jpg`, `png`, or `webp`.
+3. Pick a canvas preset such as `9:16 Vertical` for TikTok/Reels/Shorts or `16:9 Landscape` for YouTube.
+4. Choose a visualizer preset from the left-side `Krasse Waves` library.
+5. Fine-tune transparency, bar count, height, line width, glow, smoothing, color mode, and effects in the right sidebar.
+6. Set the output filename and export folder in the bottom bar.
+7. Click `RENDERN` to create the MP4.
+
+## How To Use
+
+### Import
+
+Use drag and drop anywhere in the window, or use the media tray buttons:
+
+- `Bilder` imports image backgrounds and covers.
+- `Videos` stores video media and can use MP4/MOV/M4V audio as the audio source.
+- `Audio` imports a standalone audio file.
+- Each imported media item has an `X` control to remove mistakes without restarting the app.
+
+### Canvas And Cover Framing
+
+The app supports social formats for music promotion:
+
+- `1:1 Square`: Instagram/Facebook feed.
+- `9:16 Vertical`: TikTok, Instagram Reels, YouTube Shorts, Spotify Canvas-style clips.
+- `16:9 Landscape`: YouTube, Vimeo, desktop playback.
+- `Super Wide`: cinematic/banner use.
+- `Ultra Wide`: monitor/cinematic layouts.
+- `Custom`: manual width and height.
+
+Use `Fit`, `Fill`, `Stretch`, or `Blur Extend` to control how the image fills the canvas. Use the cover controls for zoom, rotation, and X/Y positioning.
+
+### Visualizer Presets
+
+The left sidebar contains fast presets that configure multiple render settings at once:
+
+- `Mesh Storm`: layered 3D-style FFT lines.
+- `Liquid Ice`: smooth neon ribbon.
+- `Sub Blocks`: stereo block bars.
+- `Circle Halo`: radial pulse spectrum.
+- `Stereo Razor`: left/right split bars.
+- `Side Walls`: vertical side waves.
+- `Mid Out`: center-outward burst.
+- `Pulse Core`: centered waveform.
+- `Ghost Low`: low-contrast cinematic visual.
+- `Trap Bars`: high-contrast EDM/trap-style bars.
+
+After choosing a preset, all settings remain editable in the right sidebar.
+
+### Effects
+
+The current global effects are:
+
+- `Bass Shake`
+- `Zoom Punch`
+- `RGB Split`
+- `Glitch`
+- `Particles`
+- `Beat Flash`
+- `Lens Glow`
+
+Each effect can be enabled/disabled and controlled with a strength slider.
+
+### YouTube Music Cover
+
+Enable `Still Icon aktivieren` to use a specific still cover/thumbnail image. The app can also export a still-cover PNG next to the rendered MP4.
+
+### Export
+
+The export bar lets you choose:
+
+- output filename
+- output folder
+- render start via `RENDERN`
+
+The exporter creates H.264/AAC MP4 files and automatically avoids overwriting by adding suffixes such as `-2`, `-3`, etc.
+
+## Performance Notes
+
+The current app intentionally prioritizes stable output over maximum hardware saturation:
+
+- Video encoding uses macOS AVFoundation/VideoToolbox, so some work happens on Apple media engines and may not show as `GPU 100%` in Activity Monitor.
+- Frame composition is still mostly CPU/CoreGraphics based, so the GPU can look underused even while the export is working.
+- `200% CPU` on macOS means roughly two full CPU cores, not 200% of the whole M-series chip.
+- Full Metal export rendering is planned for Phase 2, where GPU utilization should become much more visible.
+
 ## What It Does
 
 - Audio import by drag and drop, button, or double-click.
