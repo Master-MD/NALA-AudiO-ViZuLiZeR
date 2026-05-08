@@ -174,6 +174,42 @@ enum KenBurnsMode: String, CaseIterable, Identifiable, Sendable {
     var id: String { rawValue }
 }
 
+struct VisualizerPreset: Identifiable, Sendable {
+    let id: String
+    let title: String
+    let subtitle: String
+    let kind: VisualizerKind
+    let position: WavePosition
+    let stereoMode: StereoMode
+    let direction: WaveDirection
+    let mirror: MirrorMode
+    let colorMode: NALAColorMode
+    let primaryHex: String
+    let secondaryHex: String
+    let glowHex: String
+    let opacity: Double
+    let barCount: Double
+    let waveHeight: Double
+    let lineWidth: Double
+    let glow: Double
+    let smoothing: Double
+    let effects: RenderEffects
+    let seed: Double
+
+    static let library: [VisualizerPreset] = [
+        VisualizerPreset(id: "mesh-storm", title: "Mesh Storm", subtitle: "3D FFT Lines", kind: .frequencyMesh, position: .center, stereoMode: .combined, direction: .leftToRight, mirror: .none, colorMode: .manual, primaryHex: "#6FEAFF", secondaryHex: "#FFFFFF", glowHex: "#00E6FF", opacity: 0.82, barCount: 112, waveHeight: 0.34, lineWidth: 1.05, glow: 0.82, smoothing: 0.88, effects: RenderEffects(bassShake: 0.10, zoomPunch: 0.16, rgbSplit: 0.20, glitch: 0.05, particles: 0.34, beatFlash: 0.06, lensGlow: 0.30), seed: 1.2),
+        VisualizerPreset(id: "liquid-ice", title: "Liquid Ice", subtitle: "Smooth Ribbon", kind: .neonFFT, position: .center, stereoMode: .midOut, direction: .centerOutward, mirror: .horizontal, colorMode: .manual, primaryHex: "#B8F6FF", secondaryHex: "#38A7FF", glowHex: "#FFFFFF", opacity: 0.78, barCount: 120, waveHeight: 0.28, lineWidth: 1.4, glow: 0.76, smoothing: 0.94, effects: RenderEffects(bassShake: 0.06, zoomPunch: 0.12, rgbSplit: 0.14, glitch: 0, particles: 0.26, beatFlash: 0.04, lensGlow: 0.24), seed: 2.6),
+        VisualizerPreset(id: "sub-blocks", title: "Sub Blocks", subtitle: "Stereo Cubes", kind: .blockBars, position: .bottom, stereoMode: .leftRight, direction: .leftToRight, mirror: .none, colorMode: .manual, primaryHex: "#00E6FF", secondaryHex: "#FF00D6", glowHex: "#FFFFFF", opacity: 0.74, barCount: 72, waveHeight: 0.24, lineWidth: 2.4, glow: 0.62, smoothing: 0.58, effects: RenderEffects(bassShake: 0.24, zoomPunch: 0.24, rgbSplit: 0.20, glitch: 0.10, particles: 0.16, beatFlash: 0.12, lensGlow: 0.18), seed: 3.1),
+        VisualizerPreset(id: "circle-halo", title: "Circle Halo", subtitle: "Radial Pulse", kind: .circleSpectrum, position: .center, stereoMode: .combined, direction: .centerOutward, mirror: .both, colorMode: .manual, primaryHex: "#7EF9FF", secondaryHex: "#A75CFF", glowHex: "#FFFFFF", opacity: 0.86, barCount: 144, waveHeight: 0.32, lineWidth: 1.15, glow: 0.88, smoothing: 0.72, effects: RenderEffects(bassShake: 0.04, zoomPunch: 0.18, rgbSplit: 0.12, glitch: 0, particles: 0.42, beatFlash: 0.10, lensGlow: 0.36), seed: 4.4),
+        VisualizerPreset(id: "stereo-razor", title: "Stereo Razor", subtitle: "L/R Split", kind: .stereoLeftRight, position: .bottom, stereoMode: .leftRight, direction: .leftToRight, mirror: .horizontal, colorMode: .manual, primaryHex: "#00DFFF", secondaryHex: "#FF2D7A", glowHex: "#FFFFFF", opacity: 0.88, barCount: 96, waveHeight: 0.27, lineWidth: 1.8, glow: 0.70, smoothing: 0.46, effects: RenderEffects(bassShake: 0.16, zoomPunch: 0.16, rgbSplit: 0.28, glitch: 0.08, particles: 0.24, beatFlash: 0.08, lensGlow: 0.22), seed: 5.7),
+        VisualizerPreset(id: "side-walls", title: "Side Walls", subtitle: "Vertical Waves", kind: .verticalSideWaves, position: .left, stereoMode: .outsideIn, direction: .centerOutward, mirror: .both, colorMode: .manual, primaryHex: "#00E6FF", secondaryHex: "#6EFFB7", glowHex: "#FFFFFF", opacity: 0.78, barCount: 120, waveHeight: 0.26, lineWidth: 1.7, glow: 0.74, smoothing: 0.66, effects: RenderEffects(bassShake: 0.08, zoomPunch: 0.14, rgbSplit: 0.12, glitch: 0.06, particles: 0.30, beatFlash: 0.06, lensGlow: 0.24), seed: 6.9),
+        VisualizerPreset(id: "mid-out", title: "Mid Out", subtitle: "Center Burst", kind: .midOutward, position: .center, stereoMode: .midOut, direction: .centerOutward, mirror: .horizontal, colorMode: .manual, primaryHex: "#FFFFFF", secondaryHex: "#00E6FF", glowHex: "#FF00D6", opacity: 0.82, barCount: 104, waveHeight: 0.30, lineWidth: 1.25, glow: 0.80, smoothing: 0.76, effects: RenderEffects(bassShake: 0.12, zoomPunch: 0.22, rgbSplit: 0.18, glitch: 0.04, particles: 0.30, beatFlash: 0.10, lensGlow: 0.32), seed: 7.5),
+        VisualizerPreset(id: "pulse-core", title: "Pulse Core", subtitle: "Center Wave", kind: .centerWave, position: .center, stereoMode: .combined, direction: .outwardCenter, mirror: .horizontal, colorMode: .manual, primaryHex: "#EFFFFF", secondaryHex: "#31C7FF", glowHex: "#FFFFFF", opacity: 0.72, barCount: 96, waveHeight: 0.25, lineWidth: 2.2, glow: 0.82, smoothing: 0.86, effects: RenderEffects(bassShake: 0.06, zoomPunch: 0.20, rgbSplit: 0.10, glitch: 0, particles: 0.22, beatFlash: 0.12, lensGlow: 0.28), seed: 8.3),
+        VisualizerPreset(id: "ghost-low", title: "Ghost Low", subtitle: "Cinematic", kind: .neonFFT, position: .bottom, stereoMode: .combined, direction: .leftToRight, mirror: .none, colorMode: .manual, primaryHex: "#DDEEFF", secondaryHex: "#6B8797", glowHex: "#99E6FF", opacity: 0.48, barCount: 92, waveHeight: 0.18, lineWidth: 1.0, glow: 0.40, smoothing: 0.92, effects: RenderEffects(bassShake: 0.03, zoomPunch: 0.08, rgbSplit: 0, glitch: 0, particles: 0.10, beatFlash: 0, lensGlow: 0.12), seed: 9.8),
+        VisualizerPreset(id: "trap-bars", title: "Trap Bars", subtitle: "Hard Contrast", kind: .barsSpectrum, position: .bottom, stereoMode: .leftRight, direction: .leftToRight, mirror: .none, colorMode: .manual, primaryHex: "#00E6FF", secondaryHex: "#FFFFFF", glowHex: "#FF2D68", opacity: 0.92, barCount: 128, waveHeight: 0.30, lineWidth: 2.0, glow: 0.86, smoothing: 0.38, effects: RenderEffects(bassShake: 0.22, zoomPunch: 0.28, rgbSplit: 0.24, glitch: 0.16, particles: 0.22, beatFlash: 0.18, lensGlow: 0.24), seed: 10.4)
+    ]
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published var audioURL: URL?
@@ -232,6 +268,7 @@ final class AppModel: ObservableObject {
     @Published var status = "Bereit"
     @Published var outputFileName = "NALA-Visualizer"
     @Published var outputDirectory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Movies/NALA-Exports")
+    @Published var selectedPresetID = ""
 
     var selectedImage: MediaItem? {
         if let selectedImageID, let item = images.first(where: { $0.id == selectedImageID }) { return item }
@@ -384,6 +421,44 @@ final class AppModel: ObservableObject {
         imageOffsetY = 0
     }
 
+    func applyVisualizerPreset(_ preset: VisualizerPreset) {
+        selectedPresetID = preset.id
+        visualizerKind = preset.kind
+        wavePosition = preset.position
+        stereoMode = preset.stereoMode
+        waveDirection = preset.direction
+        mirrorMode = preset.mirror
+        colorMode = preset.colorMode
+        primaryHex = preset.primaryHex
+        secondaryHex = preset.secondaryHex
+        glowHex = preset.glowHex
+        opacity = preset.opacity
+        barCount = preset.barCount
+        waveHeight = preset.waveHeight
+        lineWidth = preset.lineWidth
+        glowStrength = preset.glow
+        smoothing = preset.smoothing
+        applyEffects(preset.effects)
+        status = "Wave-Preset aktiviert: \(preset.title)"
+    }
+
+    private func applyEffects(_ effects: RenderEffects) {
+        bassShakeEnabled = effects.bassShake > 0.001
+        bassShakeStrength = effects.bassShake
+        zoomPunchEnabled = effects.zoomPunch > 0.001
+        zoomPunchStrength = effects.zoomPunch
+        rgbSplitEnabled = effects.rgbSplit > 0.001
+        rgbSplitStrength = effects.rgbSplit
+        glitchEnabled = effects.glitch > 0.001
+        glitchStrength = effects.glitch
+        particlesEnabled = effects.particles > 0.001
+        particlesStrength = effects.particles
+        beatFlashEnabled = effects.beatFlash > 0.001
+        beatFlashStrength = effects.beatFlash
+        lensGlowEnabled = effects.lensGlow > 0.001
+        lensGlowStrength = effects.lensGlow
+    }
+
     func export() async {
         guard let audioURL = effectiveAudioURL else { status = "Bitte Audio oder Video mit Audiotrack auswählen"; return }
         guard let imageURL = previewImageURL else { status = "Bitte Bild auswählen"; return }
@@ -523,17 +598,37 @@ struct ContentView: View {
     }
 
     private var sidebar: some View {
-        Panel("NALA") {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("NALA").font(.system(size: 42, weight: .black)).italic()
-                Text("AUDIO-VIZULIZER").foregroundStyle(.cyan).font(.headline)
-                feature("square.and.arrow.down", "Drag & Drop oder Doppelklick")
-                feature("waveform", "Waveform oder Block Stereo Bars")
-                feature("slider.horizontal.3", "Transparenz, Zoom, Rotation")
-                feature("xmark.circle", "Falsche Medien per X löschen")
-                feature("photo", "YouTube Music Still Cover")
+        VStack(spacing: 8) {
+            Panel("NALA") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("NALA").font(.system(size: 42, weight: .black)).italic()
+                    Text("AUDIO-VIZULIZER").foregroundStyle(.cyan).font(.headline)
+                    feature("square.and.arrow.down", "Drag & Drop oder Doppelklick")
+                    feature("waveform", "Krasse FFT Waves links")
+                    feature("slider.horizontal.3", "Transparenz, Zoom, Rotation")
+                    feature("xmark.circle", "Falsche Medien per X löschen")
+                    feature("photo", "YouTube Music Still Cover")
+                }
+            }
+            .frame(height: 260)
+
+            Panel("Krasse Waves") {
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+                        ForEach(VisualizerPreset.library) { preset in
+                            WavePresetCard(
+                                preset: preset,
+                                selected: model.selectedPresetID == preset.id
+                            ) {
+                                model.applyVisualizerPreset(preset)
+                            }
+                        }
+                    }
+                    .padding(.bottom, 2)
+                }
             }
         }
+        .frame(maxHeight: .infinity, alignment: .top)
     }
 
     private var settings: some View {
@@ -676,6 +771,172 @@ struct ContentView: View {
                 .disabled(!enabled.wrappedValue)
         }
         .opacity(enabled.wrappedValue ? 1 : 0.52)
+    }
+}
+
+struct WavePresetCard: View {
+    let preset: VisualizerPreset
+    let selected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 5) {
+                WavePresetMiniCanvas(preset: preset)
+                    .frame(height: 58)
+                    .clipShape(RoundedRectangle(cornerRadius: 5))
+                    .overlay(RoundedRectangle(cornerRadius: 5).stroke(selected ? .cyan : .white.opacity(0.08), lineWidth: selected ? 2 : 1))
+                Text(preset.title)
+                    .font(.caption2.bold())
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                Text(preset.subtitle)
+                    .font(.system(size: 9))
+                    .foregroundStyle(.white.opacity(0.52))
+                    .lineLimit(1)
+            }
+            .padding(6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(selected ? Color.cyan.opacity(0.15) : Color.white.opacity(0.045))
+            .clipShape(RoundedRectangle(cornerRadius: 7))
+            .overlay(RoundedRectangle(cornerRadius: 7).stroke(selected ? .cyan.opacity(0.75) : .white.opacity(0.07), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .help("\(preset.title): \(preset.kind.rawValue)")
+    }
+}
+
+struct WavePresetMiniCanvas: View {
+    let preset: VisualizerPreset
+
+    var body: some View {
+        Canvas { context, size in
+            context.fill(Path(CGRect(origin: .zero, size: size)), with: .linearGradient(
+                Gradient(colors: [
+                    Color(red: 0.015, green: 0.025, blue: 0.032),
+                    Color(red: 0.030, green: 0.055, blue: 0.070)
+                ]),
+                startPoint: .zero,
+                endPoint: CGPoint(x: size.width, y: size.height)
+            ))
+            let colors = presetColors
+            let samples = miniSamples(count: 72, seed: preset.seed)
+            switch preset.kind {
+            case .circleSpectrum:
+                drawCircle(context: &context, size: size, samples: samples, colors: colors)
+            case .blockBars, .barsSpectrum, .stereoLeftRight:
+                drawBars(context: &context, size: size, samples: samples, colors: colors)
+            case .verticalSideWaves:
+                drawSideWave(context: &context, size: size, samples: samples, colors: colors)
+            case .frequencyMesh, .neonFFT:
+                drawMesh(context: &context, size: size, samples: samples, colors: colors, layers: preset.kind == .frequencyMesh ? 5 : 3)
+            default:
+                drawWave(context: &context, size: size, samples: samples, colors: colors)
+            }
+        }
+    }
+
+    private var presetColors: [Color] {
+        [
+            Color(NSColor(hex: preset.primaryHex) ?? .cyan),
+            Color(NSColor(hex: preset.secondaryHex) ?? .systemPink),
+            Color(NSColor(hex: preset.glowHex) ?? .white)
+        ]
+    }
+
+    private func miniSamples(count: Int, seed: Double) -> [CGFloat] {
+        (0..<count).map { index in
+            let x = Double(index)
+            let bass = abs(sin(x * 0.16 + seed)) * 0.44
+            let mid = abs(sin(x * 0.41 + seed * 0.7)) * 0.34
+            let spike = pow(abs(sin(x * 0.073 + seed * 1.9)), 5.0) * 0.32
+            return CGFloat(min(1, 0.08 + bass + mid + spike))
+        }
+    }
+
+    private func drawBars(context: inout GraphicsContext, size: CGSize, samples: [CGFloat], colors: [Color]) {
+        let count = 34
+        let slot = size.width / CGFloat(count)
+        let base = size.height * 0.72
+        for index in 0..<count {
+            let sample = samples[(index * max(1, samples.count / count)) % samples.count]
+            let height = sample * size.height * 0.52
+            let rect = CGRect(x: CGFloat(index) * slot + slot * 0.18, y: base - height, width: slot * 0.62, height: height)
+            context.fill(Path(rect), with: .color(colors[index % colors.count].opacity(0.88)))
+            if preset.stereoMode != .combined || preset.kind == .blockBars {
+                context.fill(Path(CGRect(x: rect.minX, y: base, width: rect.width, height: height * 0.45)), with: .color(colors[(index + 1) % colors.count].opacity(0.55)))
+            }
+        }
+    }
+
+    private func drawWave(context: inout GraphicsContext, size: CGSize, samples: [CGFloat], colors: [Color]) {
+        let base = size.height * 0.58
+        let band = size.height * 0.30
+        let step = size.width / CGFloat(max(1, samples.count - 1))
+        var path = Path()
+        for index in samples.indices {
+            let point = CGPoint(x: CGFloat(index) * step, y: base + sin(CGFloat(index) * 0.18) * 3 - samples[index] * band)
+            if index == 0 {
+                path.move(to: point)
+            } else {
+                path.addLine(to: point)
+            }
+        }
+        context.addFilter(.shadow(color: colors[0].opacity(0.9), radius: 5))
+        context.stroke(path, with: .linearGradient(Gradient(colors: colors), startPoint: .zero, endPoint: CGPoint(x: size.width, y: 0)), lineWidth: 2)
+    }
+
+    private func drawMesh(context: inout GraphicsContext, size: CGSize, samples: [CGFloat], colors: [Color], layers: Int) {
+        let step = size.width / CGFloat(max(1, samples.count - 1))
+        context.addFilter(.shadow(color: colors[0].opacity(0.85), radius: 5))
+        for layer in 0..<layers {
+            let t = CGFloat(layer) / CGFloat(max(1, layers - 1))
+            let base = size.height * (0.30 + t * 0.42)
+            var path = Path()
+            for index in samples.indices {
+                let ripple = sin(CGFloat(index) * 0.21 + t * 5) * size.height * 0.035
+                let point = CGPoint(x: CGFloat(index) * step, y: base + ripple - samples[index] * size.height * (0.18 + t * 0.14))
+                if index == 0 {
+                    path.move(to: point)
+                } else {
+                    path.addLine(to: point)
+                }
+            }
+            context.stroke(path, with: .linearGradient(Gradient(colors: colors), startPoint: .zero, endPoint: CGPoint(x: size.width, y: base)), lineWidth: layers > 3 ? 0.9 : 1.6)
+        }
+    }
+
+    private func drawCircle(context: inout GraphicsContext, size: CGSize, samples: [CGFloat], colors: [Color]) {
+        let center = CGPoint(x: size.width / 2, y: size.height / 2)
+        let radius = min(size.width, size.height) * 0.18
+        context.addFilter(.shadow(color: colors[0].opacity(0.9), radius: 5))
+        for index in 0..<64 {
+            let angle = CGFloat(index) / 64 * .pi * 2
+            let sample = samples[index % samples.count]
+            let length = radius + sample * min(size.width, size.height) * 0.23
+            var path = Path()
+            path.move(to: CGPoint(x: center.x + cos(angle) * radius, y: center.y + sin(angle) * radius))
+            path.addLine(to: CGPoint(x: center.x + cos(angle) * length, y: center.y + sin(angle) * length))
+            context.stroke(path, with: .color(colors[index % colors.count].opacity(0.85)), lineWidth: 0.9)
+        }
+    }
+
+    private func drawSideWave(context: inout GraphicsContext, size: CGSize, samples: [CGFloat], colors: [Color]) {
+        let count = min(54, samples.count)
+        let step = size.height / CGFloat(count)
+        context.addFilter(.shadow(color: colors[0].opacity(0.8), radius: 5))
+        for index in 0..<count {
+            let y = CGFloat(index) * step
+            let width = samples[index] * size.width * 0.40
+            var left = Path()
+            left.move(to: CGPoint(x: size.width * 0.12, y: y))
+            left.addLine(to: CGPoint(x: size.width * 0.12 + width, y: y))
+            context.stroke(left, with: .color(colors[index % colors.count].opacity(0.85)), lineWidth: 1.0)
+            var right = Path()
+            right.move(to: CGPoint(x: size.width * 0.88, y: y))
+            right.addLine(to: CGPoint(x: size.width * 0.88 - width, y: y))
+            context.stroke(right, with: .color(colors[(index + 1) % colors.count].opacity(0.65)), lineWidth: 1.0)
+        }
     }
 }
 

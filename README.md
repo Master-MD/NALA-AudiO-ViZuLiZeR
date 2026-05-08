@@ -28,6 +28,7 @@ Open the DMG and drag `NALA-AudiO-ViZuLiZeR.app` into `Applications`.
 - Canvas fit modes: Fit, Fill, Stretch, and Blur Extend.
 - Cover adjustment with zoom below `1.0`, X/Y offset, rotation, and reset.
 - Visualizers: Bottom, Top, Center Wave, Stereo Left/Right, Mid-Outward, Vertical Side Waves, Bars, Block Stereo Bars, Circle, Neon FFT Wave, and Frequency Mesh.
+- Left-side visualizer preset library with mini FFT tiles for Mesh Storm, Liquid Ice, Sub Blocks, Circle Halo, Stereo Razor, Side Walls, Mid Out, Pulse Core, Ghost Low, and Trap Bars.
 - Waveform controls: position, stereo mode, direction, mirroring, transparency, bar count, height, line width, glow, and smoothing.
 - Color modes: Intelligent Match, Extreme Contrast, Colorful, Manual HEX, and Low Contrast.
 - Ken Burns: Zoom In, Zoom Out, Pan Left/Right/Up/Down, and Smooth Drift.
