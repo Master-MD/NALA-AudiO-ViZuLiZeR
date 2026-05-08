@@ -174,6 +174,41 @@ enum KenBurnsMode: String, CaseIterable, Identifiable, Sendable {
     var id: String { rawValue }
 }
 
+enum RenderMode: String, CaseIterable, Identifiable, Sendable {
+    case standard = "Standard"
+    case turbo = "Turbo"
+    case max = "MAX"
+
+    var id: String { rawValue }
+
+    var fps: Int {
+        switch self {
+        case .standard, .turbo: 30
+        case .max: 60
+        }
+    }
+
+    var bitrate: Int {
+        switch self {
+        case .standard: 12_000_000
+        case .turbo: 22_000_000
+        case .max: 38_000_000
+        }
+    }
+
+    var buttonTitle: String {
+        switch self {
+        case .standard: "RENDERN"
+        case .turbo: "TURBO RENDERN"
+        case .max: "MAX RENDERN"
+        }
+    }
+
+    var summary: String {
+        "\(fps) fps / \(bitrate / 1_000_000) Mbps"
+    }
+}
+
 struct VisualizerPreset: Identifiable, Sendable {
     let id: String
     let title: String
@@ -208,6 +243,33 @@ struct VisualizerPreset: Identifiable, Sendable {
         VisualizerPreset(id: "ghost-low", title: "Ghost Low", subtitle: "Cinematic", kind: .neonFFT, position: .bottom, stereoMode: .combined, direction: .leftToRight, mirror: .none, colorMode: .manual, primaryHex: "#DDEEFF", secondaryHex: "#6B8797", glowHex: "#99E6FF", opacity: 0.48, barCount: 92, waveHeight: 0.18, lineWidth: 1.0, glow: 0.40, smoothing: 0.92, effects: RenderEffects(bassShake: 0.03, zoomPunch: 0.08, rgbSplit: 0, glitch: 0, particles: 0.10, beatFlash: 0, lensGlow: 0.12), seed: 9.8),
         VisualizerPreset(id: "trap-bars", title: "Trap Bars", subtitle: "Hard Contrast", kind: .barsSpectrum, position: .bottom, stereoMode: .leftRight, direction: .leftToRight, mirror: .none, colorMode: .manual, primaryHex: "#00E6FF", secondaryHex: "#FFFFFF", glowHex: "#FF2D68", opacity: 0.92, barCount: 128, waveHeight: 0.30, lineWidth: 2.0, glow: 0.86, smoothing: 0.38, effects: RenderEffects(bassShake: 0.22, zoomPunch: 0.28, rgbSplit: 0.24, glitch: 0.16, particles: 0.22, beatFlash: 0.18, lensGlow: 0.24), seed: 10.4)
     ]
+}
+
+enum BatchJobStatus: Equatable {
+    case queued
+    case rendering
+    case done(String)
+    case failed(String)
+
+    var label: String {
+        switch self {
+        case .queued: "Wartet"
+        case .rendering: "Rendert"
+        case .done(let filename): "Fertig: \(filename)"
+        case .failed(let message): "Fehler: \(message)"
+        }
+    }
+}
+
+struct BatchJob: Identifiable {
+    let id = UUID()
+    let audioURL: URL
+    let imageURL: URL
+    let outputDirectory: URL
+    let requestedName: String
+    let snapshot: ExportSnapshot
+    var status: BatchJobStatus = .queued
+    var progress: Double = 0
 }
 
 @MainActor
@@ -269,6 +331,9 @@ final class AppModel: ObservableObject {
     @Published var outputFileName = "NALA-Visualizer"
     @Published var outputDirectory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Movies/NALA-Exports")
     @Published var selectedPresetID = ""
+    @Published var renderMode: RenderMode = .standard
+    @Published var batchJobs: [BatchJob] = []
+    @Published var isBatchRendering = false
 
     var selectedImage: MediaItem? {
         if let selectedImageID, let item = images.first(where: { $0.id == selectedImageID }) { return item }
@@ -322,6 +387,10 @@ final class AppModel: ObservableObject {
             beatFlash: beatFlashEnabled ? beatFlashStrength : 0,
             lensGlow: lensGlowEnabled ? lensGlowStrength : 0
         )
+    }
+
+    var canCreateRenderJob: Bool {
+        effectiveAudioURL != nil && previewImageURL != nil && !isRendering && !isBatchRendering
     }
 
     func importURLs(_ urls: [URL]) {
@@ -460,9 +529,86 @@ final class AppModel: ObservableObject {
     }
 
     func export() async {
+        guard !isRendering, !isBatchRendering else { return }
         guard let audioURL = effectiveAudioURL else { status = "Bitte Audio oder Video mit Audiotrack auswählen"; return }
         guard let imageURL = previewImageURL else { status = "Bitte Bild auswählen"; return }
-        let snapshot = ExportSnapshot(
+        let snapshot = makeSnapshot()
+        isRendering = true
+        renderProgress = 0
+        status = "\(renderMode.rawValue)-Render läuft ..."
+        do {
+            let output = try await Exporter.export(snapshot: snapshot, audioURL: audioURL, imageURL: imageURL, outputDirectory: outputDirectory, requestedName: outputFileName) { progress in
+                Task { @MainActor in
+                    self.renderProgress = progress
+                    self.status = "\(self.renderMode.rawValue)-Render läuft ... \(Int(progress * 100))%"
+                }
+            }
+            if stillIconEnabled, let image = NSImage(contentsOf: imageURL), let data = image.pngData {
+                try? data.write(to: output.deletingLastPathComponent().appendingPathComponent("\(Exporter.safeFileStem(outputFileName))-Still-Cover.png"))
+            }
+            status = "Export fertig: \(output.lastPathComponent)"
+            NSWorkspace.shared.activateFileViewerSelecting([output])
+        } catch {
+            status = "Export fehlgeschlagen: \(error.localizedDescription)"
+        }
+        isRendering = false
+    }
+
+    func addCurrentToBatch() {
+        guard let audioURL = effectiveAudioURL else { status = "Bitte Audio oder Video mit Audiotrack auswählen"; return }
+        guard let imageURL = previewImageURL else { status = "Bitte Bild auswählen"; return }
+        batchJobs.append(BatchJob(audioURL: audioURL, imageURL: imageURL, outputDirectory: outputDirectory, requestedName: outputFileName, snapshot: makeSnapshot()))
+        status = "Batch-Job hinzugefügt: \(outputFileName)"
+    }
+
+    func removeBatchJob(_ job: BatchJob) {
+        guard !isBatchRendering else { return }
+        batchJobs.removeAll { $0.id == job.id }
+        status = "Batch-Job entfernt"
+    }
+
+    func clearBatch() {
+        guard !isBatchRendering else { return }
+        batchJobs.removeAll()
+        status = "Batch geleert"
+    }
+
+    func renderBatch() async {
+        guard !isRendering, !isBatchRendering else { return }
+        guard !batchJobs.isEmpty else { status = "Batch ist leer"; return }
+        isBatchRendering = true
+        renderProgress = 0
+        status = "Batch-Render läuft ..."
+        for job in batchJobs {
+            guard let index = batchJobs.firstIndex(where: { $0.id == job.id }) else { continue }
+            batchJobs[index].status = .rendering
+            batchJobs[index].progress = 0
+            do {
+                let output = try await Exporter.export(snapshot: job.snapshot, audioURL: job.audioURL, imageURL: job.imageURL, outputDirectory: job.outputDirectory, requestedName: job.requestedName) { progress in
+                    Task { @MainActor in
+                        if let currentIndex = self.batchJobs.firstIndex(where: { $0.id == job.id }) {
+                            self.batchJobs[currentIndex].progress = progress
+                        }
+                        self.renderProgress = progress
+                        self.status = "Batch rendert \(job.requestedName) ... \(Int(progress * 100))%"
+                    }
+                }
+                if let currentIndex = batchJobs.firstIndex(where: { $0.id == job.id }) {
+                    batchJobs[currentIndex].status = .done(output.lastPathComponent)
+                    batchJobs[currentIndex].progress = 1
+                }
+            } catch {
+                if let currentIndex = batchJobs.firstIndex(where: { $0.id == job.id }) {
+                    batchJobs[currentIndex].status = .failed(error.localizedDescription)
+                }
+            }
+        }
+        isBatchRendering = false
+        status = "Batch abgeschlossen"
+    }
+
+    private func makeSnapshot() -> ExportSnapshot {
+        ExportSnapshot(
             size: canvasSize,
             canvasFitMode: canvasFitMode,
             visualizerKind: visualizerKind,
@@ -485,29 +631,11 @@ final class AppModel: ObservableObject {
             kenBurnsMode: kenBurnsMode,
             kenBurnsStrength: kenBurnsStrength,
             kenBurnsSpeed: kenBurnsSpeed,
+            renderMode: renderMode,
             effects: renderEffects,
             samples: waveform,
             spectrumFrames: spectrumFrames
         )
-        isRendering = true
-        renderProgress = 0
-        status = "Render läuft ..."
-        do {
-            let output = try await Exporter.export(snapshot: snapshot, audioURL: audioURL, imageURL: imageURL, outputDirectory: outputDirectory, requestedName: outputFileName) { progress in
-                Task { @MainActor in
-                    self.renderProgress = progress
-                    self.status = "Render läuft ... \(Int(progress * 100))%"
-                }
-            }
-            if stillIconEnabled, let image = NSImage(contentsOf: imageURL), let data = image.pngData {
-                try? data.write(to: output.deletingLastPathComponent().appendingPathComponent("\(Exporter.safeFileStem(outputFileName))-Still-Cover.png"))
-            }
-            status = "Export fertig: \(output.lastPathComponent)"
-            NSWorkspace.shared.activateFileViewerSelecting([output])
-        } catch {
-            status = "Export fehlgeschlagen: \(error.localizedDescription)"
-        }
-        isRendering = false
     }
 
     private func choose(_ extensions: [String], multiple: Bool, handler: ([URL]) -> Void) {
@@ -581,8 +709,12 @@ struct ContentView: View {
                     PreviewPanel()
                     MediaTray()
                         .frame(height: 150)
+                    if !model.batchJobs.isEmpty {
+                        BatchQueueView()
+                            .frame(height: 112)
+                    }
                     ExportBar()
-                        .frame(height: 74)
+                        .frame(height: 104)
                 }
                 settings
                     .frame(width: 330)
@@ -1480,7 +1612,7 @@ struct ExportBar: View {
                     TextField("NALA-Visualizer", text: $model.outputFileName)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 220)
-                        .disabled(model.isRendering)
+                        .disabled(model.isRendering || model.isBatchRendering)
                     Text("Speicherort")
                         .font(.caption)
                         .foregroundStyle(.white.opacity(0.65))
@@ -1491,26 +1623,132 @@ struct ExportBar: View {
                         .frame(width: 260, alignment: .leading)
                         .foregroundStyle(.white.opacity(0.7))
                     Button("Wählen ...") { model.chooseOutputDirectory() }
-                        .disabled(model.isRendering)
+                        .disabled(model.isRendering || model.isBatchRendering)
+                }
+                HStack(spacing: 10) {
+                    Text("Render")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.65))
+                    Picker("Render", selection: $model.renderMode) {
+                        ForEach(RenderMode.allCases) { mode in
+                            Text(mode.rawValue).tag(mode)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 120)
+                    .disabled(model.isRendering || model.isBatchRendering)
+                    Text(model.renderMode.summary)
+                        .font(.caption2)
+                        .foregroundStyle(.cyan)
+                    Button { model.addCurrentToBatch() } label: {
+                        Label("Zur Batch", systemImage: "plus.rectangle.on.rectangle")
+                    }
+                    .disabled(!model.canCreateRenderJob)
+                    Text("\(model.batchJobs.count) Jobs")
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.55))
                 }
                 Text(model.status).font(.caption).foregroundStyle(model.status.contains("fehl") ? .orange : .green)
             }
             Spacer()
-            if model.isRendering { ProgressView(value: model.renderProgress).frame(width: 180) }
+            if model.isRendering || model.isBatchRendering { ProgressView(value: model.renderProgress).frame(width: 180) }
             Button {
                 Task { await model.export() }
             } label: {
-                Label(model.isRendering ? "RENDERT" : "RENDERN", systemImage: "square.and.arrow.up")
+                Label(model.isRendering ? "RENDERT" : model.renderMode.buttonTitle, systemImage: model.renderMode == .max ? "bolt.fill" : "square.and.arrow.up")
                     .frame(width: 210, height: 48)
-                    .background(LinearGradient(colors: [.blue, .cyan], startPoint: .leading, endPoint: .trailing))
+                    .background(renderGradient)
                     .clipShape(RoundedRectangle(cornerRadius: 6))
             }
             .buttonStyle(.plain)
-            .disabled(model.isRendering)
+            .disabled(!model.canCreateRenderJob)
         }
         .padding(12)
         .background(Color(red: 0.035, green: 0.055, blue: 0.065))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var renderGradient: LinearGradient {
+        switch model.renderMode {
+        case .standard:
+            LinearGradient(colors: [.blue, .cyan], startPoint: .leading, endPoint: .trailing)
+        case .turbo:
+            LinearGradient(colors: [.cyan, .purple], startPoint: .leading, endPoint: .trailing)
+        case .max:
+            LinearGradient(colors: [.orange, .pink], startPoint: .leading, endPoint: .trailing)
+        }
+    }
+}
+
+struct BatchQueueView: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        Panel("Batch Queue") {
+            HStack(spacing: 10) {
+                ScrollView(.horizontal) {
+                    HStack(spacing: 8) {
+                        ForEach(model.batchJobs) { job in
+                            batchCard(job)
+                        }
+                    }
+                }
+                VStack(spacing: 8) {
+                    Button {
+                        Task { await model.renderBatch() }
+                    } label: {
+                        Label(model.isBatchRendering ? "Batch läuft" : "Batch starten", systemImage: "play.fill")
+                            .frame(width: 126)
+                    }
+                    .disabled(model.batchJobs.isEmpty || model.isRendering || model.isBatchRendering)
+                    Button("Leeren") { model.clearBatch() }
+                        .frame(width: 126)
+                        .disabled(model.batchJobs.isEmpty || model.isBatchRendering)
+                }
+            }
+        }
+    }
+
+    private func batchCard(_ job: BatchJob) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text(job.requestedName)
+                    .font(.caption.bold())
+                    .lineLimit(1)
+                Spacer()
+                if !model.isBatchRendering {
+                    Button { model.removeBatchJob(job) } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .symbolRenderingMode(.palette)
+                            .foregroundStyle(.white, .red)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            Text(job.snapshot.renderMode.rawValue + " - " + job.snapshot.renderMode.summary)
+                .font(.system(size: 9))
+                .foregroundStyle(.cyan.opacity(0.85))
+            ProgressView(value: job.progress)
+                .frame(width: 150)
+            Text(job.status.label)
+                .font(.system(size: 9))
+                .lineLimit(1)
+                .foregroundStyle(statusColor(job.status))
+        }
+        .padding(8)
+        .frame(width: 178, height: 78, alignment: .leading)
+        .background(Color.white.opacity(0.045))
+        .clipShape(RoundedRectangle(cornerRadius: 7))
+        .overlay(RoundedRectangle(cornerRadius: 7).stroke(.white.opacity(0.08), lineWidth: 1))
+    }
+
+    private func statusColor(_ status: BatchJobStatus) -> Color {
+        switch status {
+        case .queued: .white.opacity(0.62)
+        case .rendering: .cyan
+        case .done: .green
+        case .failed: .orange
+        }
     }
 }
 
@@ -1746,6 +1984,7 @@ struct ExportSnapshot: Sendable {
     let kenBurnsMode: KenBurnsMode
     let kenBurnsStrength: Double
     let kenBurnsSpeed: Double
+    let renderMode: RenderMode
     let effects: RenderEffects
     let samples: [CGFloat]
     let spectrumFrames: [[CGFloat]]
@@ -1783,15 +2022,18 @@ enum Exporter {
         let assetDuration = max(1, CMTimeGetSeconds((try? await asset.load(.duration)) ?? CMTime(seconds: 8, preferredTimescale: 600)))
         let duration = max(1, min(maxDuration ?? assetDuration, assetDuration))
         let size = snapshot.size
-        let fps = 30
+        let fps = snapshot.renderMode.fps
         let writer = try AVAssetWriter(outputURL: videoOnlyOutput, fileType: .mp4)
         let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.h264,
             AVVideoWidthKey: Int(size.width),
             AVVideoHeightKey: Int(size.height),
             AVVideoCompressionPropertiesKey: [
-                AVVideoAverageBitRateKey: 12_000_000,
-                AVVideoExpectedSourceFrameRateKey: fps
+                AVVideoAverageBitRateKey: snapshot.renderMode.bitrate,
+                AVVideoExpectedSourceFrameRateKey: fps,
+                AVVideoMaxKeyFrameIntervalKey: fps * 2,
+                AVVideoAllowFrameReorderingKey: false,
+                AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel
             ]
         ])
         videoInput.expectsMediaDataInRealTime = false
@@ -1886,7 +2128,9 @@ enum Exporter {
             try compositionAudioTrack.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: sourceAudioTrack, at: .zero)
         }
         try? FileManager.default.removeItem(at: outputURL)
-        guard let export = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHighestQuality) else {
+        let compatiblePresets = AVAssetExportSession.exportPresets(compatibleWith: composition)
+        let preset = compatiblePresets.contains(AVAssetExportPresetPassthrough) ? AVAssetExportPresetPassthrough : AVAssetExportPresetHighestQuality
+        guard let export = AVAssetExportSession(asset: composition, presetName: preset) else {
             throw NSError(domain: "NALA", code: 41, userInfo: [NSLocalizedDescriptionKey: "AVAssetExportSession konnte nicht erstellt werden"])
         }
         export.outputURL = outputURL
@@ -2184,8 +2428,9 @@ enum SmokeTest {
     static func runIfRequested() {
         let args = CommandLine.arguments
         let doubleExport = args.contains("--smoke-double-export")
+        let maxExport = args.contains("--smoke-max-export")
         let renderTestIndex = args.firstIndex(of: "--render-test-set")
-        guard args.contains("--smoke-export") || doubleExport || renderTestIndex != nil else { return }
+        guard args.contains("--smoke-export") || doubleExport || maxExport || renderTestIndex != nil else { return }
         let semaphore = DispatchSemaphore(value: 0)
         Task {
             do {
@@ -2222,6 +2467,7 @@ enum SmokeTest {
                     kenBurnsMode: .zoomIn,
                     kenBurnsStrength: 0.15,
                     kenBurnsSpeed: 0.35,
+                    renderMode: maxExport ? .max : .standard,
                     effects: RenderEffects(
                         bassShake: 0.20,
                         zoomPunch: 0.18,
@@ -2290,6 +2536,7 @@ enum SmokeTest {
             kenBurnsMode: .zoomIn,
             kenBurnsStrength: 0.10,
             kenBurnsSpeed: 0.35,
+            renderMode: .standard,
             effects: RenderEffects(
                 bassShake: 0.18,
                 zoomPunch: 0.12,

@@ -24,7 +24,8 @@ Open the DMG and drag `NALA-AudiO-ViZuLiZeR.app` into `Applications`.
 4. Choose a visualizer preset from the left-side `Krasse Waves` library.
 5. Fine-tune transparency, bar count, height, line width, glow, smoothing, color mode, and effects in the right sidebar.
 6. Set the output filename and export folder in the bottom bar.
-7. Click `RENDERN` to create the MP4.
+7. Choose `Standard`, `Turbo`, or `MAX` render mode.
+8. Click `RENDERN`, `TURBO RENDERN`, or `MAX RENDERN` to create the MP4.
 
 ## How To Use
 
@@ -91,9 +92,19 @@ The export bar lets you choose:
 
 - output filename
 - output folder
-- render start via `RENDERN`
+- render mode: `Standard`, `Turbo`, or `MAX`
+- render start via `RENDERN`, `TURBO RENDERN`, or `MAX RENDERN`
+- optional `Zur Batch` to queue the current setup for later batch rendering
 
 The exporter creates H.264/AAC MP4 files and automatically avoids overwriting by adding suffixes such as `-2`, `-3`, etc.
+
+Render modes:
+
+- `Standard`: stable 30 FPS export with balanced bitrate.
+- `Turbo`: 30 FPS export with higher bitrate and more aggressive encoder settings.
+- `MAX`: 60 FPS export with higher bitrate for stronger machines such as M-series Max chips.
+
+The batch queue works like a compact HandBrake-style job list: prepare a setup, click `Zur Batch`, change media or settings, add the next job, then start the queue. Jobs render sequentially so long exports stay predictable and do not corrupt each other.
 
 ## Performance Notes
 
@@ -102,6 +113,7 @@ The current app intentionally prioritizes stable output over maximum hardware sa
 - Video encoding uses macOS AVFoundation/VideoToolbox, so some work happens on Apple media engines and may not show as `GPU 100%` in Activity Monitor.
 - Frame composition is still mostly CPU/CoreGraphics based, so the GPU can look underused even while the export is working.
 - `200% CPU` on macOS means roughly two full CPU cores, not 200% of the whole M-series chip.
+- `MAX` mode increases export work to 60 FPS and higher bitrate, but it is not a true Metal export compositor yet.
 - Full Metal export rendering is planned for Phase 2, where GPU utilization should become much more visible.
 
 ## What It Does
@@ -124,6 +136,9 @@ The current app intentionally prioritizes stable output over maximum hardware sa
 - YouTube Music Still Icon: choose a cover image or use the current image as cover.
 - Adaptive FFT spectrum frames for smoother bars, circles, block visuals, and mesh waves.
 - Export naming with automatic filename sanitizing and suffix handling.
+- Render modes: Standard, Turbo, and MAX.
+- MAX render path targets 60 FPS H.264 output.
+- Batch queue for multiple queued exports from different current setups.
 - Export MP4 through macOS AVFoundation / VideoToolbox with H.264 video and AAC audio.
 - Export smoke tests for generated assets and MP4-as-audio-source workflows.
 
@@ -166,6 +181,12 @@ Double export including MP4 audio-track reuse:
 .build/release/NALA-AudiO-ViZuLiZeR --smoke-double-export
 ```
 
+MAX-mode 60 FPS smoke export:
+
+```bash
+.build/release/NALA-AudiO-ViZuLiZeR --smoke-max-export
+```
+
 Render a short real-asset test:
 
 ```bash
@@ -190,7 +211,8 @@ The generated local DMG is written to:
 
 - The preview is SwiftUI/Canvas-based in this MVP. A shared Metal/MTKView renderer is still the target architecture for a later high-performance release.
 - Video backgrounds are prepared as project media. The stable v0.3 export uses a still image/cover as the video background and can extract/use audio from an imported video.
-- Effect timing is prepared conceptually; v0.3.2 renders global effect strength. Per-effect start/end keyframes are planned for Phase 2.
+- Effect timing is prepared conceptually; v0.3.4 renders global effect strength. Per-effect start/end keyframes are planned for Phase 2.
+- Batch rendering is sequential in v0.3.4. Parallel batch workers are deliberately deferred until the export compositor is fully Metal-backed.
 - ProRes/H.265, full particles, and shader-grade visualizer scenes are Phase 2.
 
 See [PORTING_PLAN.md](PORTING_PLAN.md) for the Windows/Linux GPU strategy.
