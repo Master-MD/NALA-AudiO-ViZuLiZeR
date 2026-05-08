@@ -8,6 +8,22 @@ Native macOS music visualizer for turning audio plus cover art into social-ready
 
 ![macOS UI reference](docs/screenshots/macos-ui-reference.png)
 
+## Screenshots
+
+### Main Workflow
+
+The main screen keeps the visualizer presets on the left, live preview in the center, media import and batch queue at the bottom, and detailed render controls in the right sidebar.
+
+![NALA macOS workflow with cover preview, Krasse Waves presets, media tray, batch queue, and MAX render controls](docs/screenshots/macos-v035-batch-max-render.png)
+
+### MAX Render Monitoring
+
+During MAX and batch renders, the current v0.3.5 renderer uses CPU/CoreGraphics composition plus AVFoundation/VideoToolbox output. These screenshots document the observed M4 Max load and are used as a baseline for the planned Metal export compositor.
+
+![CPU monitor during NALA MAX render](docs/screenshots/macos-v035-cpu-monitor.png)
+
+![GPU monitor during NALA MAX render](docs/screenshots/macos-v035-gpu-monitor.png)
+
 ## Current macOS Build
 
 A test DMG is included for quick installation:
