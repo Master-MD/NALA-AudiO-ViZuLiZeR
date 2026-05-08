@@ -234,10 +234,10 @@ The generated local DMG is written to:
 - Video backgrounds are prepared as project media. The stable v0.3 export uses a still image/cover as the video background and can extract/use audio from an imported video.
 - Some Suno MP4 exports contain video and audio only, with no lyric/subtitle stream. The app supports metadata detection where present, but copy/paste is the reliable fallback.
 - Effect timing is prepared conceptually; v0.3.5 renders global effect strength. Per-effect start/end keyframes are planned for Phase 2.
-- Batch rendering is sequential in v0.3.4. Parallel batch workers are deliberately deferred until the export compositor is fully Metal-backed.
+- Batch rendering is sequential in v0.3.5. Parallel batch workers are deliberately deferred until the export compositor is fully Metal-backed.
 - ProRes/H.265, full particles, and shader-grade visualizer scenes are Phase 2.
 
-See [PORTING_PLAN.md](PORTING_PLAN.md) for the Windows/Linux GPU strategy and [PORTING_PROMPTS.md](PORTING_PROMPTS.md) for iOS/iPadOS and Windows porting prompts.
+See [TODO.md](TODO.md) for the performance backlog, [PORTING_PLAN.md](PORTING_PLAN.md) for the Windows/Linux GPU strategy, and [PORTING_PROMPTS.md](PORTING_PROMPTS.md) for iOS/iPadOS and Windows porting prompts.
 
 ## License
 
