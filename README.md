@@ -8,19 +8,6 @@ Native macOS music visualizer for turning audio plus cover art into social-ready
 
 ![macOS UI reference](docs/screenshots/macos-ui-reference.png)
 
-## What It Does
-
-- Import audio by drag and drop, button, or double-click.
-- Import images and videos into a media tray.
-- Remove accidentally imported audio, images, and videos with `X` controls.
-- Pick a YouTube Music / still-cover image.
-- Adjust cover art with zoom, rotation, and X/Y offset.
-- Choose canvas formats: `1:1`, `9:16`, `16:9`, and `Super Wide`.
-- Render either a bottom waveform or block stereo bars.
-- Control visualizer transparency, bar count, and visualizer height.
-- Set a custom export file name.
-- Export MP4 through macOS AVFoundation / VideoToolbox.
-
 ## Current macOS Build
 
 A test DMG is included for quick installation:
@@ -28,6 +15,28 @@ A test DMG is included for quick installation:
 [dist/NALA-AudiO-ViZuLiZeR.dmg](dist/NALA-AudiO-ViZuLiZeR.dmg)
 
 Open the DMG and drag `NALA-AudiO-ViZuLiZeR.app` into `Applications`.
+
+## What It Does
+
+- Audio import by drag and drop, button, or double-click.
+- Image import by drag and drop, button, or double-click.
+- Video import as project media.
+- MP4/MOV/M4V import can automatically use the video's audio track as the audio source.
+- Remove accidentally imported media with visible `X` controls.
+- Canvas presets: `1:1`, `9:16`, `16:9`, `Super Wide`, `Ultra Wide`, and `Custom`.
+- Ultra/4K resolutions for Square, Vertical, Landscape, and Super Wide.
+- Canvas fit modes: Fit, Fill, Stretch, and Blur Extend.
+- Cover adjustment with zoom below `1.0`, X/Y offset, rotation, and reset.
+- Visualizers: Bottom, Top, Center Wave, Stereo Left/Right, Mid-Outward, Vertical Side Waves, Bars, Block Stereo Bars, Circle, Neon FFT Wave, and Frequency Mesh.
+- Waveform controls: position, stereo mode, direction, mirroring, transparency, bar count, height, line width, glow, and smoothing.
+- Color modes: Intelligent Match, Extreme Contrast, Colorful, Manual HEX, and Low Contrast.
+- Ken Burns: Zoom In, Zoom Out, Pan Left/Right/Up/Down, and Smooth Drift.
+- Effects: Bass Shake, Zoom Punch, RGB Split, Glitch, Particles, Beat Flash, and Lens Glow.
+- YouTube Music Still Icon: choose a cover image or use the current image as cover.
+- Adaptive FFT spectrum frames for smoother bars, circles, block visuals, and mesh waves.
+- Export naming with automatic filename sanitizing and suffix handling.
+- Export MP4 through macOS AVFoundation / VideoToolbox with H.264 video and AAC audio.
+- Export smoke tests for generated assets and MP4-as-audio-source workflows.
 
 ## Build From Source
 
@@ -54,19 +63,46 @@ The app exports videos to:
 ~/Movies/NALA-Exports
 ```
 
-## Export Naming
+## Export Smoke Tests
 
-Use the `Dateiname` field in the export bar. The app sanitizes invalid filename characters automatically. If a file already exists, the export is saved with a suffix such as `-2` or `-3`.
+Basic generated asset export:
 
-## Roadmap
+```bash
+.build/release/NALA-AudiO-ViZuLiZeR --smoke-export
+```
 
-- Proper native Metal renderer for the macOS preview and export path.
-- More visualizer types: circle spectrum, dots, side waves, hybrid modes.
-- Video backgrounds and multi-image slideshow projects.
-- Better FFT beat detection and frequency band controls.
-- Preset/project save and load UI.
-- Notarized macOS release.
-- Windows and Ubuntu ports with GPU acceleration.
+Double export including MP4 audio-track reuse:
+
+```bash
+.build/release/NALA-AudiO-ViZuLiZeR --smoke-double-export
+```
+
+Render a short real-asset test:
+
+```bash
+.build/release/NALA-AudiO-ViZuLiZeR --render-test-set "/path/song.mp3" "/path/cover.png" 8
+```
+
+The third parameter is the test duration in seconds. Rendering a full song can take longer because this MVP uses a stable CPU/CoreGraphics export path.
+
+## DMG Build
+
+```bash
+./build_dmg.sh
+```
+
+The generated local DMG is written to:
+
+```text
+/Users/ultramacuser/Downloads/NALA-AudiO-ViZuLiZeR-Release/NALA-AudiO-ViZuLiZeR.dmg
+```
+
+## Known Limits
+
+- The preview is SwiftUI/Canvas-based in this MVP. A shared Metal/MTKView renderer is still the target architecture for a later high-performance release.
+- Video backgrounds are prepared as project media. The stable v0.3 export uses a still image/cover as the video background and can extract/use audio from an imported video.
+- Effect timing is prepared conceptually; v0.3.2 renders global effect strength. Per-effect start/end keyframes are planned for Phase 2.
+- ProRes/H.265, full particles, and shader-grade visualizer scenes are Phase 2.
 
 See [PORTING_PLAN.md](PORTING_PLAN.md) for the Windows/Linux GPU strategy.
 
