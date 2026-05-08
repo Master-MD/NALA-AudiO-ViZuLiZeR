@@ -1,6 +1,7 @@
 import Accelerate
 import AVFoundation
 import AppKit
+import Foundation
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -128,6 +129,25 @@ enum WavePosition: String, CaseIterable, Identifiable, Sendable {
     case left = "links"
     case right = "rechts"
     var id: String { rawValue }
+}
+
+enum LyricsPosition: String, CaseIterable, Identifiable, Sendable {
+    case aboveWave = "Über Wave"
+    case belowWave = "Unter Wave"
+    case top = "Oben"
+    case center = "Mitte"
+    case bottom = "Unten"
+
+    var id: String { rawValue }
+}
+
+struct LyricsCue: Identifiable, Sendable {
+    let id = UUID()
+    let start: Double?
+    let end: Double?
+    let text: String
+
+    var isTimed: Bool { start != nil }
 }
 
 enum StereoMode: String, CaseIterable, Identifiable, Sendable {
@@ -334,6 +354,17 @@ final class AppModel: ObservableObject {
     @Published var renderMode: RenderMode = .standard
     @Published var batchJobs: [BatchJob] = []
     @Published var isBatchRendering = false
+    @Published var audioDuration = 165.0
+    @Published var lyricsEnabled = false
+    @Published var lyricsPosition: LyricsPosition = .aboveWave
+    @Published var lyricsSize = 1.0
+    @Published var lyricsOpacity = 0.95
+    @Published var lyricsText = "" {
+        didSet {
+            lyricsCues = LyricsEngine.parse(lyricsText)
+        }
+    }
+    @Published private(set) var lyricsCues: [LyricsCue] = []
 
     var selectedImage: MediaItem? {
         if let selectedImageID, let item = images.first(where: { $0.id == selectedImageID }) { return item }
@@ -393,6 +424,17 @@ final class AppModel: ObservableObject {
         effectiveAudioURL != nil && previewImageURL != nil && !isRendering && !isBatchRendering
     }
 
+    var lyricsLineCount: Int {
+        lyricsCues.count
+    }
+
+    var lyricsStatus: String {
+        if lyricsText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Keine Lyrics geladen"
+        }
+        return lyricsCues.contains(where: { $0.isTimed }) ? "\(lyricsLineCount) getimte Zeilen" : "\(lyricsLineCount) Zeilen, automatisch verteilt"
+    }
+
     func importURLs(_ urls: [URL]) {
         for url in urls {
             switch url.pathExtension.lowercased() {
@@ -435,12 +477,20 @@ final class AppModel: ObservableObject {
         status = "\(statusText) - Analyse läuft ..."
         Task {
             let duration = await AudioTools.duration(url: url)
+            let embeddedLyrics = await LyricsEngine.embeddedLyrics(url: url)
             let adaptiveFrameCount = max(720, min(7200, Int(duration * 24)))
             let analysis = await AudioTools.analysis(url: url, waveformCount: 420, frameCount: adaptiveFrameCount, bins: max(24, min(160, Int(barCount))))
             await MainActor.run {
+                self.audioDuration = duration
                 self.waveform = analysis.waveform
                 self.spectrumFrames = analysis.spectrumFrames
-                self.status = "\(statusText) - FFT bereit"
+                if let embeddedLyrics, self.lyricsText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    self.lyricsText = embeddedLyrics
+                    self.lyricsEnabled = true
+                    self.status = "\(statusText) - FFT + Lyrics bereit"
+                } else {
+                    self.status = "\(statusText) - FFT bereit"
+                }
             }
         }
     }
@@ -454,6 +504,39 @@ final class AppModel: ObservableObject {
             stillIconEnabled = stillIconURL != nil
             status = "YouTube-Music-Cover gewählt"
         }
+    }
+
+    func reloadLyricsFromAudioMetadata() {
+        guard let url = effectiveAudioURL else {
+            status = "Bitte zuerst Audio oder Video importieren"
+            return
+        }
+        status = "Lyrics-Metadaten werden gelesen ..."
+        Task {
+            let embeddedLyrics = await LyricsEngine.embeddedLyrics(url: url)
+            await MainActor.run {
+                if let embeddedLyrics {
+                    self.lyricsText = embeddedLyrics
+                    self.lyricsEnabled = true
+                    self.status = "Lyrics aus Metadaten geladen"
+                } else {
+                    self.status = "Keine eingebetteten Lyrics gefunden - Copy/Paste nutzen"
+                }
+            }
+        }
+    }
+
+    func clearLyrics() {
+        lyricsText = ""
+        lyricsEnabled = false
+        status = "Lyrics geleert"
+    }
+
+    func previewLyrics(at phase: TimeInterval) -> String? {
+        guard lyricsEnabled else { return nil }
+        let duration = max(1, audioDuration)
+        let time = phase.truncatingRemainder(dividingBy: duration)
+        return LyricsEngine.text(at: time, duration: duration, cues: lyricsCues)
     }
 
     func removeImage(_ item: MediaItem) {
@@ -633,6 +716,11 @@ final class AppModel: ObservableObject {
             kenBurnsSpeed: kenBurnsSpeed,
             renderMode: renderMode,
             effects: renderEffects,
+            lyricsEnabled: lyricsEnabled,
+            lyricsPosition: lyricsPosition,
+            lyricsSize: lyricsSize,
+            lyricsOpacity: lyricsOpacity,
+            lyricsCues: lyricsCues,
             samples: waveform,
             spectrumFrames: spectrumFrames
         )
@@ -869,6 +957,27 @@ struct ContentView: View {
                         Button("Cover wählen") { model.chooseStillIcon() }
                         Button("Aktuelles Bild") { model.useSelectedAsCover() }
                     }
+                }
+                Panel("Lyrics") {
+                    Toggle("Lyrics einblenden", isOn: $model.lyricsEnabled)
+                    Picker("Position", selection: $model.lyricsPosition) {
+                        ForEach(LyricsPosition.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    slider("Größe", value: $model.lyricsSize, range: 0.65...1.6, percent: false)
+                    slider("Deckkraft", value: $model.lyricsOpacity, range: 0.25...1, percent: true)
+                    HStack {
+                        Button("Aus Metadaten") { model.reloadLyricsFromAudioMetadata() }
+                        Button("Leeren") { model.clearLyrics() }
+                    }
+                    TextEditor(text: $model.lyricsText)
+                        .font(.system(size: 11, design: .monospaced))
+                        .frame(height: 130)
+                        .scrollContentBackground(.hidden)
+                        .background(Color.white.opacity(0.045))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                    Text(model.lyricsStatus)
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.62))
                 }
             }
         }
@@ -1231,6 +1340,16 @@ struct PreviewPanel: View {
                             smoothing: model.smoothing,
                             effects: effects
                         )
+                        if let lyric = model.previewLyrics(at: phase) {
+                            LyricsOverlayView(
+                                text: lyric,
+                                position: model.lyricsPosition,
+                                wavePosition: model.resolvedWavePosition,
+                                heightScale: model.waveHeight,
+                                sizeScale: model.lyricsSize,
+                                opacity: model.lyricsOpacity
+                            )
+                        }
                     }
                     .frame(width: rect.width, height: rect.height)
                 }
@@ -1334,6 +1453,72 @@ struct CanvasImageLayer: View {
                     x: CGFloat(offsetX) * proxy.size.width * 0.35 + kenBurnsOffset.width + effectOffset.width,
                     y: -CGFloat(offsetY) * proxy.size.height * 0.35 + kenBurnsOffset.height + effectOffset.height
                 )
+        }
+    }
+}
+
+struct LyricsOverlayView: View {
+    let text: String
+    let position: LyricsPosition
+    let wavePosition: WavePosition
+    let heightScale: Double
+    let sizeScale: Double
+    let opacity: Double
+
+    var body: some View {
+        GeometryReader { proxy in
+            Text(text)
+                .font(.system(size: fontSize(in: proxy.size), weight: .black, design: .rounded))
+                .foregroundStyle(.white.opacity(opacity))
+                .multilineTextAlignment(.center)
+                .lineLimit(3)
+                .minimumScaleFactor(0.55)
+                .shadow(color: .black.opacity(0.95), radius: 6, x: 0, y: 2)
+                .shadow(color: .cyan.opacity(0.30 * opacity), radius: 12, x: 0, y: 0)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(.black.opacity(0.18 * opacity), in: RoundedRectangle(cornerRadius: 8))
+                .frame(width: proxy.size.width * 0.86)
+                .position(x: proxy.size.width / 2, y: yPosition(in: proxy.size))
+        }
+        .allowsHitTesting(false)
+    }
+
+    private func fontSize(in size: CGSize) -> CGFloat {
+        max(18, min(size.width, size.height) * 0.038 * CGFloat(sizeScale))
+    }
+
+    private func yPosition(in size: CGSize) -> CGFloat {
+        let wave = CGFloat(heightScale)
+        switch position {
+        case .top:
+            return size.height * 0.12
+        case .center:
+            return size.height * 0.50
+        case .bottom:
+            return size.height * 0.86
+        case .aboveWave:
+            switch wavePosition {
+            case .top:
+                return size.height * min(0.36, wave + 0.12)
+            case .center:
+                return size.height * 0.36
+            case .left, .right:
+                return size.height * 0.74
+            case .bottom:
+                return size.height * max(0.58, 0.90 - wave)
+            }
+        case .belowWave:
+            switch wavePosition {
+            case .top:
+                return size.height * max(0.10, wave * 0.52)
+            case .center:
+                return size.height * 0.64
+            case .left, .right:
+                return size.height * 0.88
+            case .bottom:
+                return size.height * 0.94
+            }
         }
     }
 }
@@ -1768,6 +1953,146 @@ enum DropLoader {
     }
 }
 
+enum LyricsEngine {
+    static func parse(_ rawText: String) -> [LyricsCue] {
+        let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        let srt = parseSRT(trimmed)
+        if !srt.isEmpty { return srt }
+        let lrc = parseLRC(trimmed)
+        if !lrc.isEmpty { return lrc }
+        return trimmed
+            .components(separatedBy: .newlines)
+            .compactMap(cleanPlainLine)
+            .map { LyricsCue(start: nil, end: nil, text: $0) }
+    }
+
+    static func text(at time: Double, duration: Double, cues: [LyricsCue]) -> String? {
+        guard !cues.isEmpty else { return nil }
+        if cues.contains(where: { $0.isTimed }) {
+            if let cue = cues.first(where: { cue in
+                guard let start = cue.start else { return false }
+                let end = cue.end ?? (start + 4.0)
+                return time >= start && time < end
+            }) {
+                return cue.text
+            }
+            return nil
+        }
+        let lineDuration = max(1.75, duration / Double(max(1, cues.count)))
+        let index = min(cues.count - 1, max(0, Int(time / lineDuration)))
+        return cues[index].text
+    }
+
+    static func embeddedLyrics(url: URL) async -> String? {
+        let asset = AVURLAsset(url: url)
+        var items: [AVMetadataItem] = []
+        if let common = try? await asset.load(.commonMetadata) {
+            items.append(contentsOf: common)
+        }
+        if let formats = try? await asset.load(.availableMetadataFormats) {
+            for format in formats {
+                if let metadata = try? await asset.loadMetadata(for: format) {
+                    items.append(contentsOf: metadata)
+                }
+            }
+        }
+        for item in items {
+            let identifier = item.identifier?.rawValue.lowercased() ?? ""
+            let commonKey = item.commonKey?.rawValue.lowercased() ?? ""
+            let key = item.key.map { String(describing: $0).lowercased() } ?? ""
+            let keySpace = item.keySpace?.rawValue.lowercased() ?? ""
+            let looksLikeLyrics = identifier.contains("lyric")
+                || commonKey.contains("lyric")
+                || key.contains("lyric")
+                || key.contains("©lyr")
+                || keySpace.contains("lyrics")
+            guard looksLikeLyrics else { continue }
+            if let value = try? await item.load(.stringValue) {
+                let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    return trimmed
+                }
+            }
+        }
+        return nil
+    }
+
+    private static func parseLRC(_ text: String) -> [LyricsCue] {
+        let pattern = #"\[(\d{1,2}):(\d{2})(?:[.:](\d{1,3}))?\]"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        var timed: [(Double, String)] = []
+        for line in text.components(separatedBy: .newlines) {
+            let nsLine = line as NSString
+            let range = NSRange(location: 0, length: nsLine.length)
+            let matches = regex.matches(in: line, range: range)
+            guard !matches.isEmpty else { continue }
+            let lyricStart = matches.last.map { $0.range.location + $0.range.length } ?? 0
+            let lyric = nsLine.substring(from: min(lyricStart, nsLine.length)).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let clean = cleanPlainLine(lyric) else { continue }
+            for match in matches {
+                let minutes = Double(nsLine.substring(with: match.range(at: 1))) ?? 0
+                let seconds = Double(nsLine.substring(with: match.range(at: 2))) ?? 0
+                let fraction: Double
+                if match.range(at: 3).location != NSNotFound {
+                    let raw = nsLine.substring(with: match.range(at: 3))
+                    fraction = (Double(raw) ?? 0) / pow(10, Double(raw.count))
+                } else {
+                    fraction = 0
+                }
+                timed.append((minutes * 60 + seconds + fraction, clean))
+            }
+        }
+        return finalizeTimed(timed)
+    }
+
+    private static func parseSRT(_ text: String) -> [LyricsCue] {
+        let blocks = text.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n\n")
+        var cues: [LyricsCue] = []
+        for block in blocks {
+            let lines = block.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+            guard let timeIndex = lines.firstIndex(where: { $0.contains("-->") }) else { continue }
+            let parts = lines[timeIndex].components(separatedBy: "-->")
+            guard parts.count == 2, let start = parseTimecode(parts[0]), let end = parseTimecode(parts[1]) else { continue }
+            let lyricLines = lines.dropFirst(timeIndex + 1).compactMap(cleanPlainLine)
+            guard !lyricLines.isEmpty else { continue }
+            cues.append(LyricsCue(start: start, end: max(start + 0.2, end), text: lyricLines.joined(separator: "\n")))
+        }
+        return cues.sorted { ($0.start ?? 0) < ($1.start ?? 0) }
+    }
+
+    private static func finalizeTimed(_ timed: [(Double, String)]) -> [LyricsCue] {
+        let sorted = timed.sorted { $0.0 < $1.0 }
+        guard !sorted.isEmpty else { return [] }
+        return sorted.enumerated().map { index, item in
+            let next = index + 1 < sorted.count ? sorted[index + 1].0 : item.0 + 4.0
+            return LyricsCue(start: item.0, end: max(item.0 + 0.35, next), text: item.1)
+        }
+    }
+
+    private static func parseTimecode(_ value: String) -> Double? {
+        let clean = value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: ",", with: ".")
+        let parts = clean.components(separatedBy: ":")
+        guard parts.count >= 2 else { return nil }
+        let seconds = Double(parts.last ?? "") ?? 0
+        let minutes = Double(parts.dropLast().last ?? "") ?? 0
+        let hours = parts.count > 2 ? (Double(parts.dropLast(2).last ?? "") ?? 0) : 0
+        return hours * 3600 + minutes * 60 + seconds
+    }
+
+    private static func cleanPlainLine(_ line: String) -> String? {
+        var clean = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return nil }
+        if clean.hasPrefix("[") && clean.hasSuffix("]") { return nil }
+        if clean.hasPrefix("(") && clean.hasSuffix(")") { return nil }
+        clean = clean.replacingOccurrences(of: #"^\d+[\.)]\s*"#, with: "", options: .regularExpression)
+        clean = clean.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        return clean.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : clean
+    }
+}
+
 struct AudioAnalysis: Sendable {
     let waveform: [CGFloat]
     let spectrumFrames: [[CGFloat]]
@@ -1986,6 +2311,11 @@ struct ExportSnapshot: Sendable {
     let kenBurnsSpeed: Double
     let renderMode: RenderMode
     let effects: RenderEffects
+    let lyricsEnabled: Bool
+    let lyricsPosition: LyricsPosition
+    let lyricsSize: Double
+    let lyricsOpacity: Double
+    let lyricsCues: [LyricsCue]
     let samples: [CGFloat]
     let spectrumFrames: [[CGFloat]]
 }
@@ -2309,6 +2639,7 @@ enum Exporter {
             }
         }
         drawExportParticles(context: context, size: size, samples: displaySamples, colors: colors, amount: max(snapshot.effects.particles, snapshot.glowStrength * 0.55), time: time)
+        drawLyrics(context: context, size: size, snapshot: snapshot, time: time, duration: duration)
     }
 
     private static func drawImage(context: CGContext, image: CGImage, rect: CGRect, rotation: CGFloat) {
@@ -2389,6 +2720,82 @@ enum Exporter {
         context.restoreGState()
     }
 
+    private static func drawLyrics(context: CGContext, size: CGSize, snapshot: ExportSnapshot, time: Double, duration: Double) {
+        guard snapshot.lyricsEnabled,
+              let text = LyricsEngine.text(at: time, duration: duration, cues: snapshot.lyricsCues),
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let fontSize = max(32, min(size.width, size.height) * 0.044 * CGFloat(snapshot.lyricsSize))
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        paragraph.lineBreakMode = .byWordWrapping
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.black.withAlphaComponent(0.96)
+        shadow.shadowBlurRadius = max(8, fontSize * 0.18)
+        shadow.shadowOffset = CGSize(width: 0, height: -2)
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: fontSize, weight: .black),
+            .foregroundColor: NSColor.white.withAlphaComponent(snapshot.lyricsOpacity),
+            .strokeColor: NSColor.black.withAlphaComponent(0.90),
+            .strokeWidth: -4.0,
+            .paragraphStyle: paragraph,
+            .shadow: shadow
+        ]
+        let attributed = NSAttributedString(string: text, attributes: attrs)
+        let maxWidth = size.width * 0.84
+        let measured = attributed.boundingRect(
+            with: CGSize(width: maxWidth, height: size.height * 0.25),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        )
+        let height = min(size.height * 0.24, max(fontSize * 1.35, measured.height + fontSize * 0.30))
+        let y = lyricsY(size: size, rectHeight: height, snapshot: snapshot)
+        let rect = CGRect(x: (size.width - maxWidth) / 2, y: y, width: maxWidth, height: height)
+
+        context.saveGState()
+        context.setBlendMode(.normal)
+        let previous = NSGraphicsContext.current
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+        attributed.draw(with: rect, options: [.usesLineFragmentOrigin, .usesFontLeading])
+        NSGraphicsContext.current = previous
+        context.restoreGState()
+    }
+
+    private static func lyricsY(size: CGSize, rectHeight: CGFloat, snapshot: ExportSnapshot) -> CGFloat {
+        let band = size.height * CGFloat(snapshot.waveHeight)
+        let baseY = exportBaseY(size: size, band: band, position: snapshot.wavePosition)
+        let raw: CGFloat
+        switch snapshot.lyricsPosition {
+        case .top:
+            raw = size.height * 0.84
+        case .center:
+            raw = size.height * 0.50 - rectHeight / 2
+        case .bottom:
+            raw = size.height * 0.08
+        case .aboveWave:
+            switch snapshot.wavePosition {
+            case .top:
+                raw = baseY - band * 1.05 - rectHeight
+            case .center:
+                raw = baseY + band * 0.48
+            case .left, .right:
+                raw = size.height * 0.74
+            case .bottom:
+                raw = baseY + band * 0.92
+            }
+        case .belowWave:
+            switch snapshot.wavePosition {
+            case .top:
+                raw = baseY + band * 0.18
+            case .center:
+                raw = baseY - band * 0.58 - rectHeight
+            case .left, .right:
+                raw = size.height * 0.08
+            case .bottom:
+                raw = baseY - band * 0.62 - rectHeight
+            }
+        }
+        return min(size.height - rectHeight - 24, max(24, raw))
+    }
+
     private static func exportFrameSamples(snapshot: ExportSnapshot, fallback: [CGFloat], time: Double, duration: Double) -> [CGFloat] {
         guard !snapshot.spectrumFrames.isEmpty else { return fallback }
         let progress = duration > 0 ? min(0.999, max(0, time / duration)) : 0
@@ -2425,6 +2832,13 @@ enum Exporter {
 }
 
 enum SmokeTest {
+    private static let sampleLyricsCues = LyricsEngine.parse("""
+    [00:00.00] WEISCH NO?!
+    [00:01.20] Seven-three crew
+    [00:02.40] Still making noise like we always do
+    [00:03.80] Eine Runde noch
+    """)
+
     static func runIfRequested() {
         let args = CommandLine.arguments
         let doubleExport = args.contains("--smoke-double-export")
@@ -2477,6 +2891,11 @@ enum SmokeTest {
                         beatFlash: 0.12,
                         lensGlow: 0.24
                     ),
+                    lyricsEnabled: args.contains("--with-lyrics"),
+                    lyricsPosition: .aboveWave,
+                    lyricsSize: 1.0,
+                    lyricsOpacity: 0.95,
+                    lyricsCues: args.contains("--with-lyrics") ? sampleLyricsCues : [],
                     samples: AudioTools.placeholderWaveform(),
                     spectrumFrames: AudioTools.placeholderSpectrumFrames(frameCount: 120, bins: 64)
                 )
@@ -2507,6 +2926,7 @@ enum SmokeTest {
         let audioURL = URL(fileURLWithPath: args[index + 1])
         let imageURL = URL(fileURLWithPath: args[index + 2])
         let seconds = args.count > index + 3 ? (Double(args[index + 3]) ?? 8.0) : 8.0
+        let withLyrics = args.contains("--with-lyrics")
         let outputDirectory = URL(fileURLWithPath: "/Users/ultramacuser/Downloads/NALA-Real-Asset-Tests", isDirectory: true)
         try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
         let analysis = await AudioTools.analysis(url: audioURL, waveformCount: 420, frameCount: 360, bins: 96)
@@ -2546,6 +2966,11 @@ enum SmokeTest {
                 beatFlash: 0.10,
                 lensGlow: 0.28
             ),
+            lyricsEnabled: withLyrics,
+            lyricsPosition: .aboveWave,
+            lyricsSize: 1.0,
+            lyricsOpacity: 0.95,
+            lyricsCues: withLyrics ? sampleLyricsCues : [],
             samples: analysis.waveform,
             spectrumFrames: analysis.spectrumFrames
         )

@@ -23,9 +23,10 @@ Open the DMG and drag `NALA-AudiO-ViZuLiZeR.app` into `Applications`.
 3. Pick a canvas preset such as `9:16 Vertical` for TikTok/Reels/Shorts or `16:9 Landscape` for YouTube.
 4. Choose a visualizer preset from the left-side `Krasse Waves` library.
 5. Fine-tune transparency, bar count, height, line width, glow, smoothing, color mode, and effects in the right sidebar.
-6. Set the output filename and export folder in the bottom bar.
-7. Choose `Standard`, `Turbo`, or `MAX` render mode.
-8. Click `RENDERN`, `TURBO RENDERN`, or `MAX RENDERN` to create the MP4.
+6. Paste lyrics in the `Lyrics` panel if you want text over the visualizer.
+7. Set the output filename and export folder in the bottom bar.
+8. Choose `Standard`, `Turbo`, or `MAX` render mode.
+9. Click `RENDERN`, `TURBO RENDERN`, or `MAX RENDERN` to create the MP4.
 
 ## How To Use
 
@@ -86,6 +87,19 @@ Each effect can be enabled/disabled and controlled with a strength slider.
 
 Enable `Still Icon aktivieren` to use a specific still cover/thumbnail image. The app can also export a still-cover PNG next to the rendered MP4.
 
+### Lyrics Overlay
+
+The `Lyrics` panel supports:
+
+- Copy/paste plain lyrics.
+- Timed `.lrc` style text such as `[00:12.30] line`.
+- SRT-style timecode blocks when pasted as text.
+- Optional metadata scan via `Aus Metadaten`.
+- Positioning above the wave, below the wave, top, center, or bottom.
+- Size and opacity controls.
+
+When plain untimed lyrics are pasted, the app distributes visible lines across the audio duration. Suno-style MP4 files may not include a real lyric/subtitle track; in that case use copy/paste.
+
 ### Export
 
 The export bar lets you choose:
@@ -134,6 +148,7 @@ The current app intentionally prioritizes stable output over maximum hardware sa
 - Ken Burns: Zoom In, Zoom Out, Pan Left/Right/Up/Down, and Smooth Drift.
 - Effects: Bass Shake, Zoom Punch, RGB Split, Glitch, Particles, Beat Flash, and Lens Glow.
 - YouTube Music Still Icon: choose a cover image or use the current image as cover.
+- Lyrics overlay: copy/paste plain lyrics, LRC, or SRT; optional embedded metadata scan; position above/below wave or top/center/bottom.
 - Adaptive FFT spectrum frames for smoother bars, circles, block visuals, and mesh waves.
 - Export naming with automatic filename sanitizing and suffix handling.
 - Render modes: Standard, Turbo, and MAX.
@@ -187,6 +202,12 @@ MAX-mode 60 FPS smoke export:
 .build/release/NALA-AudiO-ViZuLiZeR --smoke-max-export
 ```
 
+MAX-mode smoke export with lyrics overlay:
+
+```bash
+.build/release/NALA-AudiO-ViZuLiZeR --smoke-max-export --with-lyrics
+```
+
 Render a short real-asset test:
 
 ```bash
@@ -211,11 +232,12 @@ The generated local DMG is written to:
 
 - The preview is SwiftUI/Canvas-based in this MVP. A shared Metal/MTKView renderer is still the target architecture for a later high-performance release.
 - Video backgrounds are prepared as project media. The stable v0.3 export uses a still image/cover as the video background and can extract/use audio from an imported video.
-- Effect timing is prepared conceptually; v0.3.4 renders global effect strength. Per-effect start/end keyframes are planned for Phase 2.
+- Some Suno MP4 exports contain video and audio only, with no lyric/subtitle stream. The app supports metadata detection where present, but copy/paste is the reliable fallback.
+- Effect timing is prepared conceptually; v0.3.5 renders global effect strength. Per-effect start/end keyframes are planned for Phase 2.
 - Batch rendering is sequential in v0.3.4. Parallel batch workers are deliberately deferred until the export compositor is fully Metal-backed.
 - ProRes/H.265, full particles, and shader-grade visualizer scenes are Phase 2.
 
-See [PORTING_PLAN.md](PORTING_PLAN.md) for the Windows/Linux GPU strategy.
+See [PORTING_PLAN.md](PORTING_PLAN.md) for the Windows/Linux GPU strategy and [PORTING_PROMPTS.md](PORTING_PROMPTS.md) for iOS/iPadOS and Windows porting prompts.
 
 ## License
 
