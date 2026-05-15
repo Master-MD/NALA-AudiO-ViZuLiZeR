@@ -1,12 +1,13 @@
 # NALA-AudiO-ViZuLiZeR TODO
 
-## Performance Notes From v0.3.5
+## Performance Notes From v0.3.8
 
 - Current MAX render works and batch render works.
 - Activity Monitor shows roughly `220% CPU`, which means about 2.2 fully loaded CPU cores, not the whole M4 Max.
-- GPU usage around 20-35% is expected in v0.3.5 because export composition is still CPU/CoreGraphics based.
+- GPU usage around 20-35% is expected in v0.3.8 because export composition is still CPU/CoreGraphics based.
 - VideoToolbox/media engines do part of the encode work, but they do not always appear as normal GPU load.
 - SSD is probably not the main limit for typical MP4 export. A 1080x1920 H.264/AAC export writes tens of MB/minute, while the internal SSD can handle far more. The bigger current limits are per-frame composition, encoder backpressure, and sequential frame generation.
+- v0.3.8 adds optional `2 Pipelines` batch rendering. This increases throughput when several independent jobs are queued, but does not replace the planned Metal compositor.
 
 ## Safe Optimizations First
 
@@ -65,10 +66,17 @@ Risks:
 
 ## Batch Queue vNext
 
-- Add per-job render mode override display and duplicate job button.
-- Add pause/cancel for the current job.
+- Add duplicate job button.
 - Add failed-job retry.
 - Add queue save/load as JSON.
+- Add drag-and-drop reordering on top of the current left/right move controls.
+- Add multi-format output groups per source job:
+  - one source image/audio setup can render 9:16, 16:9, and 1:1 variants automatically
+  - each variant stores canvas preset, fit mode, render mode, output suffix, and optional image crop override
+- Add import decision dialog when several images with different aspect ratios are dropped:
+  - `Ein Video pro Format/Bild`
+  - `Als Ken-Burns/Slideshow verwenden`
+  - `Nur aktuelles Bild verwenden`
 - Add batch presets:
   - TikTok 9:16
   - YouTube 16:9

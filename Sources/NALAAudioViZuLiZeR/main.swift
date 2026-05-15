@@ -229,6 +229,56 @@ enum RenderMode: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+enum SceneTemplateKind: String, CaseIterable, Identifiable, Sendable {
+    case off = "Aus"
+    case djHud = "DJ HUD"
+    case djLowerThird = "DJ Lower Third"
+    case fullscreenWave = "Fullscreen Wave"
+
+    var id: String { rawValue }
+
+    var summary: String {
+        switch self {
+        case .off: "Keine Scene-Overlays"
+        case .djHud: "BPM/Genre/HUD über Artwork"
+        case .djLowerThird: "DJ-Titel, Player-Bar und Preset-Leiste"
+        case .fullscreenWave: "Minimaler Fullscreen-Live-Look"
+        }
+    }
+}
+
+struct SceneOverlaySettings: Sendable {
+    var template: SceneTemplateKind
+    var artist: String
+    var subtitle: String
+    var bpm: String
+    var genre: String
+    var tag: String
+    var showBadges: Bool
+    var showTitle: Bool
+    var showStats: Bool
+    var opacity: Double
+    var accentHex: String
+    var magentaHex: String
+
+    var isEnabled: Bool { template != .off }
+
+    static let none = SceneOverlaySettings(
+        template: .off,
+        artist: "DJ SeN-SiZE",
+        subtitle: "DRUM N BASS IN SEINER LEBENDIGSTEN FORM",
+        bpm: "174 BPM",
+        genre: "NEURO\nBASS",
+        tag: "DNB",
+        showBadges: true,
+        showTitle: true,
+        showStats: false,
+        opacity: 0.85,
+        accentHex: "#00E6FF",
+        magentaHex: "#FF00D6"
+    )
+}
+
 struct VisualizerPreset: Identifiable, Sendable {
     let id: String
     let title: String
@@ -265,10 +315,11 @@ struct VisualizerPreset: Identifiable, Sendable {
     ]
 }
 
-enum BatchJobStatus: Equatable {
+enum BatchJobStatus: Equatable, Sendable {
     case queued
     case rendering
     case done(String)
+    case cancelled
     case failed(String)
 
     var label: String {
@@ -276,24 +327,32 @@ enum BatchJobStatus: Equatable {
         case .queued: "Wartet"
         case .rendering: "Rendert"
         case .done(let filename): "Fertig: \(filename)"
+        case .cancelled: "Gestoppt"
         case .failed(let message): "Fehler: \(message)"
         }
     }
 }
 
-struct BatchJob: Identifiable {
+struct BatchJob: Identifiable, Sendable {
     let id = UUID()
     let audioURL: URL
     let imageURL: URL
     let outputDirectory: URL
     let requestedName: String
-    let snapshot: ExportSnapshot
+    var snapshot: ExportSnapshot
     var status: BatchJobStatus = .queued
     var progress: Double = 0
 }
 
+struct BatchRenderResult: Sendable {
+    let jobID: UUID
+    let outputName: String?
+    let errorMessage: String?
+    let cancelled: Bool
+}
+
 @MainActor
-final class AppModel: ObservableObject {
+final class AppModel: ObservableObject, @unchecked Sendable {
     @Published var audioURL: URL?
     @Published var images: [MediaItem] = []
     @Published var videos: [MediaItem] = []
@@ -354,7 +413,23 @@ final class AppModel: ObservableObject {
     @Published var renderMode: RenderMode = .standard
     @Published var batchJobs: [BatchJob] = []
     @Published var isBatchRendering = false
+    @Published var selectedBatchJobID: UUID?
+    @Published var isBatchInspectorPresented = false
+    @Published var batchCancelRequested = false
+    @Published var batchParallelPipelines = ProcessInfo.processInfo.activeProcessorCount >= 12
     @Published var audioDuration = 165.0
+    @Published var sceneTemplate: SceneTemplateKind = .off
+    @Published var sceneArtist = "DJ SeN-SiZE"
+    @Published var sceneSubtitle = "DRUM N BASS IN SEINER LEBENDIGSTEN FORM"
+    @Published var sceneBPM = "174 BPM"
+    @Published var sceneGenre = "NEURO\nBASS"
+    @Published var sceneTag = "DNB"
+    @Published var sceneShowBadges = true
+    @Published var sceneShowTitle = true
+    @Published var sceneShowStats = false
+    @Published var sceneOpacity = 0.85
+    @Published var sceneAccentHex = "#00E6FF"
+    @Published var sceneMagentaHex = "#FF00D6"
     @Published var lyricsEnabled = false
     @Published var lyricsPosition: LyricsPosition = .aboveWave
     @Published var lyricsSize = 1.0
@@ -365,6 +440,7 @@ final class AppModel: ObservableObject {
         }
     }
     @Published private(set) var lyricsCues: [LyricsCue] = []
+    private var batchRenderTask: Task<Void, Never>?
 
     var selectedImage: MediaItem? {
         if let selectedImageID, let item = images.first(where: { $0.id == selectedImageID }) { return item }
@@ -374,6 +450,15 @@ final class AppModel: ObservableObject {
     var selectedVideo: MediaItem? {
         if let selectedVideoID, let item = videos.first(where: { $0.id == selectedVideoID }) { return item }
         return videos.first
+    }
+
+    var selectedBatchJob: BatchJob? {
+        guard let selectedBatchJobID else { return batchJobs.first }
+        return batchJobs.first { $0.id == selectedBatchJobID } ?? batchJobs.first
+    }
+
+    var batchPipelineLimit: Int {
+        batchParallelPipelines ? 2 : 1
     }
 
     var previewImageURL: URL? {
@@ -420,6 +505,23 @@ final class AppModel: ObservableObject {
         )
     }
 
+    var sceneOverlaySettings: SceneOverlaySettings {
+        SceneOverlaySettings(
+            template: sceneTemplate,
+            artist: sceneArtist,
+            subtitle: sceneSubtitle,
+            bpm: sceneBPM,
+            genre: sceneGenre,
+            tag: sceneTag,
+            showBadges: sceneShowBadges,
+            showTitle: sceneShowTitle,
+            showStats: sceneShowStats,
+            opacity: sceneOpacity,
+            accentHex: sceneAccentHex,
+            magentaHex: sceneMagentaHex
+        )
+    }
+
     var canCreateRenderJob: Bool {
         effectiveAudioURL != nil && previewImageURL != nil && !isRendering && !isBatchRendering
     }
@@ -444,6 +546,7 @@ final class AppModel: ObservableObject {
                 let item = MediaItem(url: url)
                 images.append(item)
                 selectedImageID = selectedImageID ?? item.id
+                applyDefaultOutputNameIfNeeded(from: url)
             case "mp4", "mov", "m4v":
                 let item = MediaItem(url: url)
                 videos.append(item)
@@ -461,6 +564,8 @@ final class AppModel: ObservableObject {
                         }
                     }
                 }
+            case "txt", "md", "markdown", "lrc", "srt":
+                importLyrics(url)
             default:
                 break
             }
@@ -498,12 +603,30 @@ final class AppModel: ObservableObject {
     func chooseAudio() { choose(["mp3", "wav", "flac", "aac", "m4a"], multiple: false) { importURLs($0) } }
     func chooseImages() { choose(["jpg", "jpeg", "png", "webp"], multiple: true) { importURLs($0) } }
     func chooseVideos() { choose(["mp4", "mov", "m4v"], multiple: true) { importURLs($0) } }
+    func chooseLyrics() { choose(["txt", "md", "markdown", "lrc", "srt"], multiple: false) { importURLs($0) } }
     func chooseStillIcon() {
         choose(["jpg", "jpeg", "png", "webp"], multiple: false) { urls in
             stillIconURL = urls.first
             stillIconEnabled = stillIconURL != nil
             status = "YouTube-Music-Cover gewählt"
         }
+    }
+
+    func importLyrics(_ url: URL) {
+        do {
+            let text = try String(contentsOf: url, encoding: .utf8)
+            lyricsText = text
+            lyricsEnabled = true
+            status = "Lyrics importiert: \(url.lastPathComponent)"
+        } catch {
+            status = "Lyrics konnten nicht geladen werden: \(error.localizedDescription)"
+        }
+    }
+
+    private func applyDefaultOutputNameIfNeeded(from imageURL: URL) {
+        let current = outputFileName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard current.isEmpty || current == "NALA-Visualizer" else { return }
+        outputFileName = Exporter.defaultOutputName(for: imageURL)
     }
 
     func reloadLyricsFromAudioMetadata() {
@@ -594,6 +717,79 @@ final class AppModel: ObservableObject {
         status = "Wave-Preset aktiviert: \(preset.title)"
     }
 
+    func applySceneTemplateDefaults() {
+        switch sceneTemplate {
+        case .off:
+            status = "DJ Scene deaktiviert"
+        case .djHud:
+            canvasPreset = .landscape
+            canvasFitMode = .fill
+            visualizerKind = .neonFFT
+            wavePosition = .center
+            stereoMode = .midOut
+            waveDirection = .centerOutward
+            mirrorMode = .horizontal
+            opacity = 0.72
+            barCount = 112
+            waveHeight = 0.26
+            lineWidth = 1.35
+            glowStrength = 0.78
+            smoothing = 0.88
+            colorMode = .manual
+            primaryHex = sceneAccentHex
+            secondaryHex = "#B9F7FF"
+            glowHex = "#FFFFFF"
+            sceneShowBadges = true
+            sceneShowTitle = true
+            sceneShowStats = true
+            status = "DJ HUD Scene aktiviert"
+        case .djLowerThird:
+            canvasPreset = .landscape
+            canvasFitMode = .fill
+            visualizerKind = .barsSpectrum
+            wavePosition = .bottom
+            stereoMode = .combined
+            waveDirection = .leftToRight
+            mirrorMode = .none
+            opacity = 0.92
+            barCount = 128
+            waveHeight = 0.30
+            lineWidth = 2.0
+            glowStrength = 0.86
+            smoothing = 0.48
+            colorMode = .manual
+            primaryHex = sceneAccentHex
+            secondaryHex = "#E9FEFF"
+            glowHex = "#FFFFFF"
+            sceneShowBadges = true
+            sceneShowTitle = true
+            sceneShowStats = false
+            status = "DJ Lower-Third Scene aktiviert"
+        case .fullscreenWave:
+            canvasPreset = .landscape
+            canvasFitMode = .fill
+            visualizerKind = .frequencyMesh
+            wavePosition = .center
+            stereoMode = .midOut
+            waveDirection = .centerOutward
+            mirrorMode = .both
+            opacity = 0.76
+            barCount = 144
+            waveHeight = 0.34
+            lineWidth = 0.95
+            glowStrength = 0.86
+            smoothing = 0.94
+            colorMode = .manual
+            primaryHex = sceneAccentHex
+            secondaryHex = sceneMagentaHex
+            glowHex = "#FFFFFF"
+            sceneShowBadges = false
+            sceneShowTitle = false
+            sceneShowStats = true
+            status = "Fullscreen Wave Scene aktiviert"
+        }
+    }
+
     private func applyEffects(_ effects: RenderEffects) {
         bassShakeEnabled = effects.bassShake > 0.001
         bassShakeStrength = effects.bassShake
@@ -627,7 +823,8 @@ final class AppModel: ObservableObject {
                 }
             }
             if stillIconEnabled, let image = NSImage(contentsOf: imageURL), let data = image.pngData {
-                try? data.write(to: output.deletingLastPathComponent().appendingPathComponent("\(Exporter.safeFileStem(outputFileName))-Still-Cover.png"))
+                let coverStem = output.deletingPathExtension().lastPathComponent
+                try? data.write(to: output.deletingLastPathComponent().appendingPathComponent("\(coverStem)-Still-Cover.png"))
             }
             status = "Export fertig: \(output.lastPathComponent)"
             NSWorkspace.shared.activateFileViewerSelecting([output])
@@ -640,54 +837,196 @@ final class AppModel: ObservableObject {
     func addCurrentToBatch() {
         guard let audioURL = effectiveAudioURL else { status = "Bitte Audio oder Video mit Audiotrack auswählen"; return }
         guard let imageURL = previewImageURL else { status = "Bitte Bild auswählen"; return }
-        batchJobs.append(BatchJob(audioURL: audioURL, imageURL: imageURL, outputDirectory: outputDirectory, requestedName: outputFileName, snapshot: makeSnapshot()))
-        status = "Batch-Job hinzugefügt: \(outputFileName)"
+        let snapshot = makeSnapshot()
+        let requestedName = uniqueBatchRequestedName(base: outputFileName, snapshot: snapshot, directory: outputDirectory)
+        let job = BatchJob(audioURL: audioURL, imageURL: imageURL, outputDirectory: outputDirectory, requestedName: requestedName, snapshot: snapshot)
+        batchJobs.append(job)
+        selectedBatchJobID = job.id
+        let addedName = Exporter.outputFileStem(requestedName: requestedName, snapshot: snapshot)
+        clearCurrentInputsAfterBatchAdd()
+        status = "Batch-Job hinzugefügt: \(addedName)"
     }
 
     func removeBatchJob(_ job: BatchJob) {
         guard !isBatchRendering else { return }
         batchJobs.removeAll { $0.id == job.id }
+        if selectedBatchJobID == job.id {
+            selectedBatchJobID = batchJobs.first?.id
+        }
         status = "Batch-Job entfernt"
     }
 
     func clearBatch() {
         guard !isBatchRendering else { return }
         batchJobs.removeAll()
+        selectedBatchJobID = nil
+        isBatchInspectorPresented = false
         status = "Batch geleert"
+    }
+
+    func selectBatchJob(_ job: BatchJob) {
+        selectedBatchJobID = job.id
+    }
+
+    func showBatchInspector(for job: BatchJob? = nil) {
+        if let job {
+            selectedBatchJobID = job.id
+        } else if selectedBatchJobID == nil {
+            selectedBatchJobID = batchJobs.first?.id
+        }
+        isBatchInspectorPresented = selectedBatchJob != nil
+    }
+
+    func updateBatchRenderMode(_ job: BatchJob, to mode: RenderMode) {
+        guard !isBatchRendering else { return }
+        guard let index = batchJobs.firstIndex(where: { $0.id == job.id }) else { return }
+        batchJobs[index].snapshot.renderMode = mode
+        status = "Batch-Job auf \(mode.rawValue) gesetzt"
+    }
+
+    func updateSelectedBatchRenderMode(to mode: RenderMode) {
+        guard let job = selectedBatchJob else { return }
+        updateBatchRenderMode(job, to: mode)
+    }
+
+    func applyRenderModeToAllBatchJobs(_ mode: RenderMode) {
+        guard !isBatchRendering else { return }
+        for index in batchJobs.indices {
+            batchJobs[index].snapshot.renderMode = mode
+        }
+        status = "\(mode.rawValue) für alle Batch-Jobs gesetzt"
+    }
+
+    private func uniqueBatchRequestedName(base: String, snapshot: ExportSnapshot, directory: URL) -> String {
+        let baseStem = Exporter.safeFileStem(base)
+        var candidate = baseStem
+        var counter = 2
+        let queuedStems = Set(batchJobs
+            .filter { $0.outputDirectory == directory }
+            .map { Exporter.outputFileStem(requestedName: $0.requestedName, snapshot: $0.snapshot) })
+        while queuedStems.contains(Exporter.outputFileStem(requestedName: candidate, snapshot: snapshot)) {
+            candidate = "\(baseStem)-\(counter)"
+            counter += 1
+        }
+        return candidate
+    }
+
+    func moveBatchJob(_ job: BatchJob, offset: Int) {
+        guard !isBatchRendering else { return }
+        guard let source = batchJobs.firstIndex(where: { $0.id == job.id }) else { return }
+        let target = max(0, min(batchJobs.count - 1, source + offset))
+        guard source != target else { return }
+        let moved = batchJobs.remove(at: source)
+        batchJobs.insert(moved, at: target)
+        selectedBatchJobID = moved.id
+        status = "Batch-Reihenfolge geändert"
+    }
+
+    func startBatchRender() {
+        guard !isBatchRendering else { return }
+        batchCancelRequested = false
+        batchRenderTask = Task { [weak self] in
+            guard let self else { return }
+            await self.renderBatch()
+        }
+    }
+
+    func cancelBatchRender() {
+        guard isBatchRendering else { return }
+        batchCancelRequested = true
+        batchRenderTask?.cancel()
+        status = "Batch wird gestoppt ..."
     }
 
     func renderBatch() async {
         guard !isRendering, !isBatchRendering else { return }
         guard !batchJobs.isEmpty else { status = "Batch ist leer"; return }
         isBatchRendering = true
+        batchCancelRequested = false
         renderProgress = 0
         status = "Batch-Render läuft ..."
-        for job in batchJobs {
-            guard let index = batchJobs.firstIndex(where: { $0.id == job.id }) else { continue }
-            batchJobs[index].status = .rendering
-            batchJobs[index].progress = 0
-            do {
-                let output = try await Exporter.export(snapshot: job.snapshot, audioURL: job.audioURL, imageURL: job.imageURL, outputDirectory: job.outputDirectory, requestedName: job.requestedName) { progress in
-                    Task { @MainActor in
-                        if let currentIndex = self.batchJobs.firstIndex(where: { $0.id == job.id }) {
-                            self.batchJobs[currentIndex].progress = progress
-                        }
-                        self.renderProgress = progress
-                        self.status = "Batch rendert \(job.requestedName) ... \(Int(progress * 100))%"
-                    }
-                }
-                if let currentIndex = batchJobs.firstIndex(where: { $0.id == job.id }) {
-                    batchJobs[currentIndex].status = .done(output.lastPathComponent)
-                    batchJobs[currentIndex].progress = 1
-                }
-            } catch {
-                if let currentIndex = batchJobs.firstIndex(where: { $0.id == job.id }) {
-                    batchJobs[currentIndex].status = .failed(error.localizedDescription)
-                }
+        defer {
+            isBatchRendering = false
+            batchRenderTask = nil
+            if batchCancelRequested || Task.isCancelled {
+                status = "Batch gestoppt"
+            } else {
+                status = "Batch abgeschlossen"
             }
         }
-        isBatchRendering = false
-        status = "Batch abgeschlossen"
+        let jobIDs = batchJobs.map(\.id)
+        let limit = max(1, min(batchPipelineLimit, 2))
+        var cursor = 0
+        while cursor < jobIDs.count {
+            if batchCancelRequested || Task.isCancelled { break }
+            let chunkIDs = Array(jobIDs[cursor..<min(cursor + limit, jobIDs.count)])
+            let jobs = chunkIDs.compactMap { id in batchJobs.first { $0.id == id } }
+            for job in jobs {
+                if let index = batchJobs.firstIndex(where: { $0.id == job.id }) {
+                    batchJobs[index].status = .rendering
+                    batchJobs[index].progress = 0
+                }
+            }
+            await withTaskGroup(of: BatchRenderResult.self) { group in
+                for job in jobs {
+                    group.addTask { [self] in
+                        do {
+                            let output = try await Exporter.export(
+                                snapshot: job.snapshot,
+                                audioURL: job.audioURL,
+                                imageURL: job.imageURL,
+                                outputDirectory: job.outputDirectory,
+                                requestedName: job.requestedName
+                            ) { progress in
+                                Task { @MainActor in
+                                    if let currentIndex = self.batchJobs.firstIndex(where: { $0.id == job.id }) {
+                                        self.batchJobs[currentIndex].progress = progress
+                                    }
+                                    let total = max(1, self.batchJobs.count)
+                                    self.renderProgress = self.batchJobs.map(\.progress).reduce(0, +) / Double(total)
+                                    self.status = "Batch rendert \(job.requestedName) ... \(Int(progress * 100))% (\(self.batchPipelineLimit) Pipeline\(self.batchPipelineLimit == 1 ? "" : "s"))"
+                                }
+                            }
+                            return BatchRenderResult(jobID: job.id, outputName: output.lastPathComponent, errorMessage: nil, cancelled: false)
+                        } catch is CancellationError {
+                            return BatchRenderResult(jobID: job.id, outputName: nil, errorMessage: nil, cancelled: true)
+                        } catch {
+                            return BatchRenderResult(jobID: job.id, outputName: nil, errorMessage: error.localizedDescription, cancelled: false)
+                        }
+                    }
+                }
+                for await result in group {
+                    guard let currentIndex = batchJobs.firstIndex(where: { $0.id == result.jobID }) else { continue }
+                    if result.cancelled {
+                        batchJobs[currentIndex].status = .cancelled
+                        batchCancelRequested = true
+                    } else if let outputName = result.outputName {
+                        batchJobs[currentIndex].status = .done(outputName)
+                        batchJobs[currentIndex].progress = 1
+                    } else {
+                        batchJobs[currentIndex].status = .failed(result.errorMessage ?? "Unbekannter Batch-Fehler")
+                    }
+                    renderProgress = batchJobs.map(\.progress).reduce(0, +) / Double(max(1, batchJobs.count))
+                }
+            }
+            cursor += limit
+        }
+    }
+
+    private func clearCurrentInputsAfterBatchAdd() {
+        audioURL = nil
+        images.removeAll()
+        videos.removeAll()
+        selectedImageID = nil
+        selectedVideoID = nil
+        stillIconURL = nil
+        stillIconEnabled = false
+        lyricsText = ""
+        lyricsEnabled = false
+        waveform = AudioTools.placeholderWaveform()
+        spectrumFrames = AudioTools.placeholderSpectrumFrames()
+        audioDuration = 165.0
+        outputFileName = ""
     }
 
     private func makeSnapshot() -> ExportSnapshot {
@@ -716,6 +1055,7 @@ final class AppModel: ObservableObject {
             kenBurnsSpeed: kenBurnsSpeed,
             renderMode: renderMode,
             effects: renderEffects,
+            sceneOverlay: sceneOverlaySettings,
             lyricsEnabled: lyricsEnabled,
             lyricsPosition: lyricsPosition,
             lyricsSize: lyricsSize,
@@ -799,7 +1139,7 @@ struct ContentView: View {
                         .frame(height: 150)
                     if !model.batchJobs.isEmpty {
                         BatchQueueView()
-                            .frame(height: 112)
+                            .frame(height: 145)
                     }
                     ExportBar()
                         .frame(height: 104)
@@ -824,6 +1164,7 @@ struct ContentView: View {
                     Text("NALA").font(.system(size: 42, weight: .black)).italic()
                     Text("AUDIO-VIZULIZER").foregroundStyle(.cyan).font(.headline)
                     feature("square.and.arrow.down", "Drag & Drop oder Doppelklick")
+                    feature("rectangle.on.rectangle.angled", "DJ Scene HUD & Live Looks")
                     feature("waveform", "Krasse FFT Waves links")
                     feature("slider.horizontal.3", "Transparenz, Zoom, Rotation")
                     feature("xmark.circle", "Falsche Medien per X löschen")
@@ -912,6 +1253,42 @@ struct ContentView: View {
                             .foregroundStyle(.orange.opacity(0.9))
                     }
                 }
+                Panel("DJ Scene / Live HUD") {
+                    Picker("Template", selection: $model.sceneTemplate) {
+                        ForEach(SceneTemplateKind.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    Text(model.sceneTemplate.summary)
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.62))
+                    Button {
+                        model.applySceneTemplateDefaults()
+                    } label: {
+                        Label("Scene anwenden", systemImage: "rectangle.on.rectangle.angled")
+                    }
+                    .disabled(model.sceneTemplate == .off)
+                    Toggle("Badges links", isOn: $model.sceneShowBadges)
+                        .disabled(model.sceneTemplate == .off)
+                    Toggle("Titel einblenden", isOn: $model.sceneShowTitle)
+                        .disabled(model.sceneTemplate == .off)
+                    Toggle("FPS/Status HUD", isOn: $model.sceneShowStats)
+                        .disabled(model.sceneTemplate == .off)
+                    slider("Deckkraft", value: $model.sceneOpacity, range: 0.2...1, percent: true)
+                        .disabled(model.sceneTemplate == .off)
+                    TextField("Artist", text: $model.sceneArtist)
+                        .disabled(model.sceneTemplate == .off)
+                    TextField("Subline", text: $model.sceneSubtitle)
+                        .disabled(model.sceneTemplate == .off)
+                    HStack {
+                        TextField("BPM", text: $model.sceneBPM)
+                        TextField("Genre", text: $model.sceneGenre)
+                        TextField("Tag", text: $model.sceneTag)
+                    }
+                    .disabled(model.sceneTemplate == .off)
+                    TextField("Accent HEX", text: $model.sceneAccentHex)
+                        .disabled(model.sceneTemplate == .off)
+                    TextField("Magenta HEX", text: $model.sceneMagentaHex)
+                        .disabled(model.sceneTemplate == .off)
+                }
                 Panel("Bild / Cover Zuschnitt") {
                     slider("Zoom", value: $model.imageZoom, range: 0.2...3, percent: false)
                     slider("Rotation", value: $model.imageRotation, range: -180...180, percent: false)
@@ -966,6 +1343,7 @@ struct ContentView: View {
                     slider("Größe", value: $model.lyricsSize, range: 0.65...1.6, percent: false)
                     slider("Deckkraft", value: $model.lyricsOpacity, range: 0.25...1, percent: true)
                     HStack {
+                        Button("Datei laden") { model.chooseLyrics() }
                         Button("Aus Metadaten") { model.reloadLyricsFromAudioMetadata() }
                         Button("Leeren") { model.clearLyrics() }
                     }
@@ -1340,6 +1718,13 @@ struct PreviewPanel: View {
                             smoothing: model.smoothing,
                             effects: effects
                         )
+                        SceneOverlayView(
+                            settings: model.sceneOverlaySettings,
+                            phase: phase,
+                            energy: energy,
+                            renderMode: model.renderMode,
+                            canvasDescription: model.canvasDescription
+                        )
                         if let lyric = model.previewLyrics(at: phase) {
                             LyricsOverlayView(
                                 text: lyric,
@@ -1453,6 +1838,210 @@ struct CanvasImageLayer: View {
                     x: CGFloat(offsetX) * proxy.size.width * 0.35 + kenBurnsOffset.width + effectOffset.width,
                     y: -CGFloat(offsetY) * proxy.size.height * 0.35 + kenBurnsOffset.height + effectOffset.height
                 )
+        }
+    }
+}
+
+struct SceneOverlayView: View {
+    let settings: SceneOverlaySettings
+    let phase: TimeInterval
+    let energy: CGFloat
+    var renderMode: RenderMode
+    let canvasDescription: String
+
+    var body: some View {
+        Group {
+            if settings.isEnabled {
+                GeometryReader { proxy in
+                    let landscape = proxy.size.width >= proxy.size.height
+                    let accent = Color(NSColor(hex: settings.accentHex) ?? .cyan)
+                    let magenta = Color(NSColor(hex: settings.magentaHex) ?? .systemPink)
+                    ZStack {
+                        if settings.showBadges {
+                            badgeStack(accent: accent, magenta: magenta, landscape: landscape)
+                                .position(x: proxy.size.width * (landscape ? 0.062 : 0.105), y: proxy.size.height * (landscape ? 0.17 : 0.13))
+                        }
+                        if settings.showTitle && settings.template != .djLowerThird {
+                            titleBlock(accent: accent, magenta: magenta, landscape: landscape, size: proxy.size)
+                                .position(titlePosition(in: proxy.size, landscape: landscape))
+                        }
+                        if settings.showStats {
+                            statsBlock(accent: accent, magenta: magenta)
+                                .position(x: proxy.size.width * 0.84, y: proxy.size.height * (landscape ? 0.12 : 0.08))
+                        }
+                        if settings.template == .djLowerThird {
+                            lowerThirdPanel(accent: accent, magenta: magenta, size: proxy.size)
+                                .position(x: proxy.size.width * (landscape ? 0.40 : 0.50), y: proxy.size.height * (landscape ? 0.88 : 0.90))
+                        }
+                        if settings.template == .fullscreenWave {
+                            liveStatus(accent: accent)
+                                .position(x: proxy.size.width * 0.14, y: proxy.size.height * 0.93)
+                        }
+                    }
+                    .opacity(settings.opacity)
+                }
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
+    private func badgeStack(accent: Color, magenta: Color, landscape: Bool) -> some View {
+        VStack(spacing: landscape ? 14 : 9) {
+            sceneBadge(settings.bpm, accent: accent)
+            sceneBadge(settings.genre, accent: accent)
+            sceneBadge(settings.tag, accent: magenta.opacity(0.86))
+        }
+    }
+
+    private func sceneBadge(_ text: String, accent: Color) -> some View {
+        Text(text)
+            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+            .multilineTextAlignment(.center)
+            .foregroundStyle(.white.opacity(0.9))
+            .lineLimit(2)
+            .minimumScaleFactor(0.68)
+            .frame(width: 66, height: 54)
+            .background(.black.opacity(0.42))
+            .overlay(
+                ZStack {
+                    RoundedRectangle(cornerRadius: 2).stroke(accent.opacity(0.72), lineWidth: 1)
+                    CornerMarks(color: accent.opacity(0.9))
+                }
+            )
+            .shadow(color: accent.opacity(0.24), radius: 8)
+    }
+
+    private func titleBlock(accent: Color, magenta: Color, landscape: Bool, size: CGSize) -> some View {
+        VStack(alignment: landscape ? .leading : .center, spacing: 2) {
+            Text("DJ")
+                .font(.system(size: max(17, min(size.width, size.height) * 0.042), weight: .black, design: .rounded))
+                .italic()
+                .foregroundStyle(accent)
+            Text(settings.artist)
+                .font(.system(size: max(24, min(size.width, size.height) * 0.065), weight: .black, design: .rounded))
+                .foregroundStyle(.white.opacity(0.94))
+                .shadow(color: .black.opacity(0.9), radius: 6, x: 0, y: 2)
+                .shadow(color: accent.opacity(0.26), radius: 12)
+                .lineLimit(1)
+                .minimumScaleFactor(0.55)
+            Text(settings.subtitle)
+                .font(.system(size: max(9, min(size.width, size.height) * 0.016), weight: .semibold, design: .rounded))
+                .foregroundStyle(accent.opacity(0.95))
+                .lineLimit(1)
+                .minimumScaleFactor(0.55)
+        }
+        .frame(width: landscape ? size.width * 0.36 : size.width * 0.76, alignment: landscape ? .leading : .center)
+    }
+
+    private func statsBlock(accent: Color, magenta: Color) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            statRow("FPS", "\(renderMode.fps).00", color: accent)
+            statRow("MODE", renderMode.rawValue, color: magenta)
+            statRow("RES", canvasDescription, color: accent.opacity(0.9))
+            statRow("SYNC", energy > 0.18 ? "LOCKED" : "IDLE", color: energy > 0.18 ? magenta : .white.opacity(0.55))
+        }
+        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+        .padding(8)
+        .background(.black.opacity(0.44))
+            .overlay(RoundedRectangle(cornerRadius: 3).stroke(.white.opacity(0.16), lineWidth: 1))
+    }
+
+    private func lowerThirdPanel(accent: Color, magenta: Color, size: CGSize) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(.black.opacity(0.58))
+                    .frame(width: 56, height: 56)
+                    .overlay(Text("DJ").font(.headline.bold()).foregroundStyle(accent))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(settings.artist)
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .lineLimit(1)
+                    Text(settings.subtitle)
+                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .foregroundStyle(accent)
+                        .lineLimit(1)
+                }
+            }
+            HStack(spacing: 8) {
+                Text("2:15").font(.system(size: 10, design: .monospaced)).foregroundStyle(.white.opacity(0.75))
+                ZStack(alignment: .leading) {
+                    Capsule().fill(.white.opacity(0.18)).frame(height: 3)
+                    Capsule().fill(LinearGradient(colors: [accent, magenta], startPoint: .leading, endPoint: .trailing)).frame(width: size.width * 0.18, height: 3)
+                    Circle().fill(.white).frame(width: 7, height: 7).offset(x: size.width * 0.18)
+                }
+                Text("4:45").font(.system(size: 10, design: .monospaced)).foregroundStyle(.white.opacity(0.75))
+            }
+            HStack(spacing: 7) {
+                ForEach(["Bottom", "Top", "Center", "Stereo", "Bars", "Circle"], id: \.self) { label in
+                    Text(label)
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.76))
+                        .frame(width: 52, height: 24)
+                        .background(.black.opacity(0.38), in: RoundedRectangle(cornerRadius: 4))
+                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(label == "Bottom" ? accent.opacity(0.9) : .white.opacity(0.12), lineWidth: 1))
+                }
+            }
+        }
+        .padding(10)
+        .frame(width: min(size.width * 0.62, 620), alignment: .leading)
+        .background(.black.opacity(0.22), in: RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func statRow(_ label: String, _ value: String, color: Color) -> some View {
+        HStack(spacing: 10) {
+            Text(label).foregroundStyle(.white.opacity(0.62)).frame(width: 34, alignment: .leading)
+            Text(value).foregroundStyle(color).lineLimit(1)
+        }
+    }
+
+    private func liveStatus(accent: Color) -> some View {
+        HStack(spacing: 7) {
+            Circle().fill(accent).frame(width: 6, height: 6)
+            Text("AUDIO STREAM ACTIVE")
+            Text("[IN] MASTER_BUS_L/R")
+        }
+        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+        .foregroundStyle(.white.opacity(0.62))
+    }
+
+    private func titlePosition(in size: CGSize, landscape: Bool) -> CGPoint {
+        switch settings.template {
+        case .djLowerThird:
+            return CGPoint(x: landscape ? size.width * 0.22 : size.width * 0.50, y: landscape ? size.height * 0.76 : size.height * 0.82)
+        case .djHud:
+            return CGPoint(x: landscape ? size.width * 0.21 : size.width * 0.50, y: landscape ? size.height * 0.75 : size.height * 0.80)
+        case .fullscreenWave:
+            return CGPoint(x: size.width * 0.50, y: size.height * 0.82)
+        case .off:
+            return CGPoint(x: size.width * 0.5, y: size.height * 0.5)
+        }
+    }
+}
+
+struct CornerMarks: View {
+    let color: Color
+
+    var body: some View {
+        GeometryReader { proxy in
+            let w = proxy.size.width
+            let h = proxy.size.height
+            let l = min(w, h) * 0.16
+            Path { path in
+                path.move(to: CGPoint(x: 0, y: l))
+                path.addLine(to: .zero)
+                path.addLine(to: CGPoint(x: l, y: 0))
+                path.move(to: CGPoint(x: w - l, y: 0))
+                path.addLine(to: CGPoint(x: w, y: 0))
+                path.addLine(to: CGPoint(x: w, y: l))
+                path.move(to: CGPoint(x: w, y: h - l))
+                path.addLine(to: CGPoint(x: w, y: h))
+                path.addLine(to: CGPoint(x: w - l, y: h))
+                path.move(to: CGPoint(x: l, y: h))
+                path.addLine(to: CGPoint(x: 0, y: h))
+                path.addLine(to: CGPoint(x: 0, y: h - l))
+            }
+            .stroke(color, lineWidth: 1.4)
         }
     }
 }
@@ -1879,18 +2468,46 @@ struct BatchQueueView: View {
                     }
                 }
                 VStack(spacing: 8) {
+                    if model.isBatchRendering {
+                        Button {
+                            model.cancelBatchRender()
+                        } label: {
+                            Label("Batch stoppen", systemImage: "stop.fill")
+                                .frame(width: 126)
+                        }
+                    } else {
+                        Button {
+                            model.startBatchRender()
+                        } label: {
+                            Label("Batch starten", systemImage: "play.fill")
+                                .frame(width: 126)
+                        }
+                        .disabled(model.batchJobs.isEmpty || model.isRendering)
+                    }
                     Button {
-                        Task { await model.renderBatch() }
+                        model.showBatchInspector()
                     } label: {
-                        Label(model.isBatchRendering ? "Batch läuft" : "Batch starten", systemImage: "play.fill")
+                        Label("Details", systemImage: "sidebar.right")
                             .frame(width: 126)
                     }
-                    .disabled(model.batchJobs.isEmpty || model.isRendering || model.isBatchRendering)
+                    .disabled(model.batchJobs.isEmpty)
+                    Button("MAX für alle") { model.applyRenderModeToAllBatchJobs(.max) }
+                        .frame(width: 126)
+                        .disabled(model.batchJobs.isEmpty || model.isBatchRendering)
+                    Toggle("2 Pipelines", isOn: $model.batchParallelPipelines)
+                        .font(.caption)
+                        .frame(width: 126, alignment: .leading)
+                        .disabled(model.isBatchRendering)
+                        .help("Auf starken Macs bis zu zwei Batch-Jobs parallel rendern")
                     Button("Leeren") { model.clearBatch() }
                         .frame(width: 126)
                         .disabled(model.batchJobs.isEmpty || model.isBatchRendering)
                 }
             }
+        }
+        .sheet(isPresented: $model.isBatchInspectorPresented) {
+            BatchInspectorSheet()
+                .environmentObject(model)
         }
     }
 
@@ -1900,8 +2517,19 @@ struct BatchQueueView: View {
                 Text(job.requestedName)
                     .font(.caption.bold())
                     .lineLimit(1)
+                    .help(job.requestedName)
                 Spacer()
                 if !model.isBatchRendering {
+                    Button { model.moveBatchJob(job, offset: -1) } label: {
+                        Image(systemName: "chevron.left.circle.fill")
+                    }
+                    .buttonStyle(.plain)
+                    .help("Nach links schieben")
+                    Button { model.moveBatchJob(job, offset: 1) } label: {
+                        Image(systemName: "chevron.right.circle.fill")
+                    }
+                    .buttonStyle(.plain)
+                    .help("Nach rechts schieben")
                     Button { model.removeBatchJob(job) } label: {
                         Image(systemName: "xmark.circle.fill")
                             .symbolRenderingMode(.palette)
@@ -1913,6 +2541,18 @@ struct BatchQueueView: View {
             Text(job.snapshot.renderMode.rawValue + " - " + job.snapshot.renderMode.summary)
                 .font(.system(size: 9))
                 .foregroundStyle(.cyan.opacity(0.85))
+            if !model.isBatchRendering {
+                Picker("Render", selection: Binding(
+                    get: { job.snapshot.renderMode },
+                    set: { model.updateBatchRenderMode(job, to: $0) }
+                )) {
+                    ForEach(RenderMode.allCases) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 92)
+            }
             ProgressView(value: job.progress)
                 .frame(width: 150)
             Text(job.status.label)
@@ -1921,10 +2561,17 @@ struct BatchQueueView: View {
                 .foregroundStyle(statusColor(job.status))
         }
         .padding(8)
-        .frame(width: 178, height: 78, alignment: .leading)
+        .frame(width: 190, height: 100, alignment: .leading)
         .background(Color.white.opacity(0.045))
         .clipShape(RoundedRectangle(cornerRadius: 7))
-        .overlay(RoundedRectangle(cornerRadius: 7).stroke(.white.opacity(0.08), lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: 7).stroke(model.selectedBatchJobID == job.id ? .cyan : .white.opacity(0.08), lineWidth: model.selectedBatchJobID == job.id ? 2 : 1))
+        .contentShape(Rectangle())
+        .onTapGesture {
+            model.selectBatchJob(job)
+        }
+        .onTapGesture(count: 2) {
+            model.showBatchInspector(for: job)
+        }
     }
 
     private func statusColor(_ status: BatchJobStatus) -> Color {
@@ -1932,7 +2579,99 @@ struct BatchQueueView: View {
         case .queued: .white.opacity(0.62)
         case .rendering: .cyan
         case .done: .green
+        case .cancelled: .orange
         case .failed: .orange
+        }
+    }
+}
+
+struct BatchInspectorSheet: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Warteschlange Details")
+                        .font(.title2.bold())
+                    Text("\(model.batchJobs.count) Batch-Job(s)")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.62))
+                }
+                Spacer()
+                Button("Schließen") { model.isBatchInspectorPresented = false }
+            }
+            if let job = model.selectedBatchJob {
+                HStack(spacing: 12) {
+                    Button { model.moveBatchJob(job, offset: -1) } label: {
+                        Label("Hoch", systemImage: "arrow.left")
+                    }
+                    .disabled(model.isBatchRendering)
+                    Button { model.moveBatchJob(job, offset: 1) } label: {
+                        Label("Runter", systemImage: "arrow.right")
+                    }
+                    .disabled(model.isBatchRendering)
+                    Picker("Render", selection: Binding(
+                        get: { job.snapshot.renderMode },
+                        set: { model.updateSelectedBatchRenderMode(to: $0) }
+                    )) {
+                        ForEach(RenderMode.allCases) { mode in
+                            Text(mode.rawValue).tag(mode)
+                        }
+                    }
+                    .frame(width: 190)
+                    .disabled(model.isBatchRendering)
+                    Button("MAX für diesen Job") { model.updateSelectedBatchRenderMode(to: .max) }
+                        .disabled(model.isBatchRendering)
+                    Button("MAX für alle") { model.applyRenderModeToAllBatchJobs(.max) }
+                        .disabled(model.isBatchRendering)
+                }
+                detailsGrid(job)
+            } else {
+                Text("Keine Aufgabe ausgewählt")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .foregroundStyle(.white.opacity(0.65))
+            }
+        }
+        .padding(18)
+        .frame(width: 760, height: 520)
+        .background(Color(red: 0.025, green: 0.035, blue: 0.042))
+        .foregroundStyle(.white)
+    }
+
+    private func detailsGrid(_ job: BatchJob) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                detailRow("Dateiname", Exporter.outputFileStem(requestedName: job.requestedName, snapshot: job.snapshot))
+                detailRow("Status", job.status.label)
+                detailRow("Render", "\(job.snapshot.renderMode.rawValue) - \(job.snapshot.renderMode.summary)")
+                detailRow("Format", "\(Int(job.snapshot.size.width)) x \(Int(job.snapshot.size.height)) / \(job.snapshot.canvasFitMode.rawValue)")
+                detailRow("Visualizer", job.snapshot.visualizerKind.rawValue)
+                detailRow("Wave", "\(job.snapshot.wavePosition.rawValue), \(job.snapshot.stereoMode.rawValue), \(job.snapshot.waveDirection.rawValue)")
+                detailRow("Audio", job.audioURL.path)
+                detailRow("Bild/Cover", job.imageURL.path)
+                detailRow("Zielordner", job.outputDirectory.path)
+                detailRow("Lyrics", job.snapshot.lyricsEnabled ? "\(job.snapshot.lyricsCues.count) Zeilen" : "Aus")
+                detailRow("Scene", job.snapshot.sceneOverlay.template.rawValue)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.white.opacity(0.045))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+        }
+    }
+
+    private func detailRow(_ title: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title)
+                .font(.caption.bold())
+                .foregroundStyle(.cyan)
+                .frame(width: 100, alignment: .leading)
+            Text(value)
+                .font(.caption)
+                .textSelection(.enabled)
+                .lineLimit(3)
+            Spacer()
         }
     }
 }
@@ -2309,8 +3048,9 @@ struct ExportSnapshot: Sendable {
     let kenBurnsMode: KenBurnsMode
     let kenBurnsStrength: Double
     let kenBurnsSpeed: Double
-    let renderMode: RenderMode
+    var renderMode: RenderMode
     let effects: RenderEffects
+    let sceneOverlay: SceneOverlaySettings
     let lyricsEnabled: Bool
     let lyricsPosition: LyricsPosition
     let lyricsSize: Double
@@ -2343,8 +3083,9 @@ enum Exporter {
     static func export(snapshot: ExportSnapshot, audioURL: URL, imageURL: URL, outputDirectory: URL, requestedName: String, maxDuration: Double? = nil, progress: @escaping @Sendable (Double) -> Void) async throws -> URL {
         let outputDir = outputDirectory
         try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
-        let output = uniqueOutputURL(in: outputDir, stem: safeFileStem(requestedName), extension: "mp4")
-        let videoOnlyOutput = outputDir.appendingPathComponent(".\(safeFileStem(requestedName))-\(UUID().uuidString)-video.mp4")
+        let outputStem = outputFileStem(requestedName: requestedName, snapshot: snapshot)
+        let output = uniqueOutputURL(in: outputDir, stem: outputStem, extension: "mp4")
+        let videoOnlyOutput = outputDir.appendingPathComponent(".\(outputStem)-\(UUID().uuidString)-video.mp4")
         try? FileManager.default.removeItem(at: output)
         try? FileManager.default.removeItem(at: videoOnlyOutput)
 
@@ -2381,13 +3122,22 @@ enum Exporter {
             throw writer.error ?? NSError(domain: "NALA", code: 30, userInfo: [NSLocalizedDescriptionKey: "AVAssetWriter konnte nicht starten"])
         }
         writer.startSession(atSourceTime: .zero)
+        func checkCancelled() throws {
+            if Task.isCancelled {
+                writer.cancelWriting()
+                try? FileManager.default.removeItem(at: videoOnlyOutput)
+                throw CancellationError()
+            }
+        }
 
         guard let image = NSImage(contentsOf: imageURL)?.cgImageValue else { throw NSError(domain: "NALA", code: 1, userInfo: [NSLocalizedDescriptionKey: "Bild konnte nicht geladen werden"]) }
         let samples = snapshot.samples
         let frameCount = Int(duration * Double(fps))
         for frame in 0..<frameCount {
+            try checkCancelled()
             var waitTicks = 0
             while !videoInput.isReadyForMoreMediaData {
+                try checkCancelled()
                 if writer.status == .failed || writer.status == .cancelled {
                     throw writer.error ?? NSError(domain: "NALA", code: 31, userInfo: [NSLocalizedDescriptionKey: "VideoWriter ist nicht mehr aktiv"])
                 }
@@ -2414,10 +3164,40 @@ enum Exporter {
             }
         }
         progress(0.94)
-        let muxed = try await muxAudio(videoURL: videoOnlyOutput, audioURL: audioURL, outputURL: output)
+        let muxed = try await muxAudio(videoURL: videoOnlyOutput, audioURL: audioURL, outputURL: output, artworkURL: imageURL)
         try? FileManager.default.removeItem(at: videoOnlyOutput)
         progress(1.0)
         return muxed
+    }
+
+    static func defaultOutputName(for imageURL: URL) -> String {
+        safeFileStem(imageURL.deletingPathExtension().lastPathComponent)
+    }
+
+    static func outputFileStem(requestedName: String, snapshot: ExportSnapshot) -> String {
+        let base = safeFileStem(requestedName)
+        let suffix = formatSuffix(size: snapshot.size)
+        return base.hasSuffix("-\(suffix)") ? base : "\(base)-\(suffix)"
+    }
+
+    static func formatSuffix(size: CGSize) -> String {
+        let width = max(size.width, size.height)
+        let ratio = size.width / max(1, size.height)
+        let format: String
+        if abs(ratio - 1.0) < 0.04 {
+            format = "1-1"
+        } else if abs(ratio - (9.0 / 16.0)) < 0.06 {
+            format = "9-16"
+        } else if abs(ratio - (16.0 / 9.0)) < 0.08 {
+            format = "16-9"
+        } else if ratio > 2.2 {
+            format = "ultra-wide"
+        } else if ratio > 1.9 {
+            format = "super-wide"
+        } else {
+            format = "\(Int(size.width))x\(Int(size.height))"
+        }
+        return width >= 2160 ? "\(format)-4k" : format
     }
 
     static func safeFileStem(_ name: String) -> String {
@@ -2426,6 +3206,10 @@ enum Exporter {
         let illegal = CharacterSet(charactersIn: "/\\?%*|\"<>:")
         let cleaned = fallback.components(separatedBy: illegal).joined(separator: "-")
         return cleaned.replacingOccurrences(of: #"[\s-]+"#, with: "-", options: .regularExpression)
+    }
+
+    static func canCreateArtworkMetadata(from url: URL) -> Bool {
+        artworkMetadata(from: url) != nil
     }
 
     private static func uniqueOutputURL(in directory: URL, stem: String, extension ext: String) -> URL {
@@ -2438,7 +3222,7 @@ enum Exporter {
         return candidate
     }
 
-    private static func muxAudio(videoURL: URL, audioURL: URL, outputURL: URL) async throws -> URL {
+    private static func muxAudio(videoURL: URL, audioURL: URL, outputURL: URL, artworkURL: URL?) async throws -> URL {
         let composition = AVMutableComposition()
         let videoAsset = AVURLAsset(url: videoURL)
         let audioAsset = AVURLAsset(url: audioURL)
@@ -2466,6 +3250,9 @@ enum Exporter {
         export.outputURL = outputURL
         export.outputFileType = .mp4
         export.shouldOptimizeForNetworkUse = true
+        if let artworkURL, let artwork = artworkMetadata(from: artworkURL) {
+            export.metadata = [artwork]
+        }
         try await withCheckedThrowingContinuation { continuation in
             export.exportAsynchronously {
                 switch export.status {
@@ -2479,6 +3266,16 @@ enum Exporter {
             }
         }
         return outputURL
+    }
+
+    private static func artworkMetadata(from url: URL) -> AVMetadataItem? {
+        guard let image = NSImage(contentsOf: url), let data = image.pngData else { return nil }
+        let item = AVMutableMetadataItem()
+        item.identifier = .commonIdentifierArtwork
+        item.value = data as NSData
+        item.dataType = kCMMetadataBaseDataType_PNG as String
+        item.locale = Locale.current
+        return item
     }
 
     private static func appendAudio(asset: AVURLAsset, input: AVAssetWriterInput, duration: Double) async throws {
@@ -2639,6 +3436,7 @@ enum Exporter {
             }
         }
         drawExportParticles(context: context, size: size, samples: displaySamples, colors: colors, amount: max(snapshot.effects.particles, snapshot.glowStrength * 0.55), time: time)
+        drawSceneOverlay(context: context, size: size, snapshot: snapshot, time: time, energy: energy)
         drawLyrics(context: context, size: size, snapshot: snapshot, time: time, duration: duration)
     }
 
@@ -2718,6 +3516,194 @@ enum Exporter {
             context.fillEllipse(in: CGRect(x: x - radius, y: y - radius, width: radius * 2, height: radius * 2))
         }
         context.restoreGState()
+    }
+
+    private static func drawSceneOverlay(context: CGContext, size: CGSize, snapshot: ExportSnapshot, time: Double, energy: CGFloat) {
+        let settings = snapshot.sceneOverlay
+        guard settings.isEnabled else { return }
+        let accent = (NSColor(hex: settings.accentHex) ?? .cyan).withAlphaComponent(settings.opacity)
+        let magenta = (NSColor(hex: settings.magentaHex) ?? .systemPink).withAlphaComponent(settings.opacity)
+        let white = NSColor.white.withAlphaComponent(0.92 * settings.opacity)
+        let landscape = size.width >= size.height
+
+        context.saveGState()
+        context.setBlendMode(.normal)
+        if settings.showBadges {
+            let badgeWidth = max(62, min(112, size.width * (landscape ? 0.052 : 0.10)))
+            let badgeHeight = badgeWidth * 0.82
+            let x = size.width * (landscape ? 0.035 : 0.055)
+            var y = size.height - size.height * (landscape ? 0.055 : 0.035) - badgeHeight
+            for (index, text) in [settings.bpm, settings.genre, settings.tag].enumerated() {
+                let rect = CGRect(x: x, y: y, width: badgeWidth, height: badgeHeight)
+                drawSceneBadge(context: context, rect: rect, text: text, accent: index == 2 ? magenta : accent, opacity: settings.opacity)
+                y -= badgeHeight + max(10, badgeHeight * 0.18)
+            }
+        }
+
+        if settings.showTitle && settings.template != .djLowerThird {
+            drawSceneTitle(context: context, size: size, settings: settings, accent: accent, white: white, landscape: landscape)
+        }
+        if settings.showStats {
+            drawSceneStats(context: context, size: size, snapshot: snapshot, energy: energy, accent: accent, magenta: magenta, opacity: settings.opacity)
+        }
+        if settings.template == .djLowerThird {
+            drawLowerThird(context: context, size: size, settings: settings, accent: accent, magenta: magenta, white: white, opacity: settings.opacity)
+        }
+        if settings.template == .fullscreenWave {
+            drawSceneText(
+                "[IN] AUDIO STREAM ACTIVE    MASTER_BUS_L/R",
+                in: CGRect(x: size.width * 0.035, y: size.height * 0.045, width: size.width * 0.42, height: 22),
+                font: NSFont.monospacedSystemFont(ofSize: max(11, min(size.width, size.height) * 0.012), weight: .semibold),
+                color: white.withAlphaComponent(0.58),
+                alignment: .left,
+                context: context
+            )
+        }
+        context.restoreGState()
+    }
+
+    private static func drawSceneBadge(context: CGContext, rect: CGRect, text: String, accent: NSColor, opacity: Double) {
+        context.saveGState()
+        context.setFillColor(NSColor.black.withAlphaComponent(0.42 * opacity).cgColor)
+        context.fill(rect)
+        context.setStrokeColor(accent.cgColor)
+        context.setLineWidth(max(1, rect.width * 0.014))
+        context.stroke(rect)
+        let corner = min(rect.width, rect.height) * 0.18
+        context.beginPath()
+        let points: [(CGPoint, CGPoint)] = [
+            (CGPoint(x: rect.minX, y: rect.minY + corner), CGPoint(x: rect.minX, y: rect.minY)),
+            (CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.minX + corner, y: rect.minY)),
+            (CGPoint(x: rect.maxX - corner, y: rect.minY), CGPoint(x: rect.maxX, y: rect.minY)),
+            (CGPoint(x: rect.maxX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.minY + corner)),
+            (CGPoint(x: rect.maxX, y: rect.maxY - corner), CGPoint(x: rect.maxX, y: rect.maxY)),
+            (CGPoint(x: rect.maxX, y: rect.maxY), CGPoint(x: rect.maxX - corner, y: rect.maxY)),
+            (CGPoint(x: rect.minX + corner, y: rect.maxY), CGPoint(x: rect.minX, y: rect.maxY)),
+            (CGPoint(x: rect.minX, y: rect.maxY), CGPoint(x: rect.minX, y: rect.maxY - corner))
+        ]
+        for segment in points {
+            context.move(to: segment.0)
+            context.addLine(to: segment.1)
+        }
+        context.strokePath()
+        drawSceneText(
+            text,
+            in: rect.insetBy(dx: 5, dy: rect.height * 0.24),
+            font: NSFont.monospacedSystemFont(ofSize: max(12, rect.width * 0.19), weight: .semibold),
+            color: NSColor.white.withAlphaComponent(0.88 * opacity),
+            alignment: .center,
+            context: context
+        )
+        context.restoreGState()
+    }
+
+    private static func drawSceneTitle(context: CGContext, size: CGSize, settings: SceneOverlaySettings, accent: NSColor, white: NSColor, landscape: Bool) {
+        let x = landscape ? size.width * 0.055 : size.width * 0.12
+        let y: CGFloat
+        switch settings.template {
+        case .djLowerThird:
+            y = size.height * (landscape ? 0.27 : 0.12)
+        case .fullscreenWave:
+            y = size.height * 0.12
+        default:
+            y = size.height * (landscape ? 0.19 : 0.12)
+        }
+        let width = landscape ? size.width * 0.40 : size.width * 0.76
+        drawSceneText(
+            "DJ",
+            in: CGRect(x: x, y: y + size.height * 0.088, width: width, height: size.height * 0.045),
+            font: NSFont.systemFont(ofSize: max(26, min(size.width, size.height) * 0.045), weight: .black),
+            color: accent,
+            alignment: landscape ? .left : .center,
+            context: context
+        )
+        drawSceneText(
+            settings.artist,
+            in: CGRect(x: x, y: y + size.height * 0.028, width: width, height: size.height * 0.074),
+            font: NSFont.systemFont(ofSize: max(38, min(size.width, size.height) * 0.066), weight: .black),
+            color: white,
+            alignment: landscape ? .left : .center,
+            context: context
+        )
+        drawSceneText(
+            settings.subtitle,
+            in: CGRect(x: x, y: y, width: width, height: size.height * 0.032),
+            font: NSFont.systemFont(ofSize: max(13, min(size.width, size.height) * 0.017), weight: .semibold),
+            color: accent,
+            alignment: landscape ? .left : .center,
+            context: context
+        )
+    }
+
+    private static func drawSceneStats(context: CGContext, size: CGSize, snapshot: ExportSnapshot, energy: CGFloat, accent: NSColor, magenta: NSColor, opacity: Double) {
+        let rect = CGRect(x: size.width * 0.73, y: size.height * 0.80, width: size.width * 0.20, height: size.height * 0.115)
+        context.setFillColor(NSColor.black.withAlphaComponent(0.38 * opacity).cgColor)
+        context.fill(rect)
+        context.setStrokeColor(NSColor.white.withAlphaComponent(0.15 * opacity).cgColor)
+        context.stroke(rect)
+        let rows = [
+            ("FPS", "\(snapshot.renderMode.fps).00", accent),
+            ("MODE", snapshot.renderMode.rawValue, magenta),
+            ("RES", "\(Int(size.width))x\(Int(size.height))", accent),
+            ("SYNC", energy > 0.18 ? "LOCKED" : "IDLE", energy > 0.18 ? magenta : NSColor.white.withAlphaComponent(0.55))
+        ]
+        let rowHeight = rect.height / CGFloat(rows.count)
+        for (index, row) in rows.enumerated() {
+            let y = rect.maxY - CGFloat(index + 1) * rowHeight + rowHeight * 0.18
+            drawSceneText(row.0, in: CGRect(x: rect.minX + 10, y: y, width: rect.width * 0.32, height: rowHeight), font: NSFont.monospacedSystemFont(ofSize: max(10, rowHeight * 0.45), weight: .semibold), color: NSColor.white.withAlphaComponent(0.62 * opacity), alignment: .left, context: context)
+            drawSceneText(row.1, in: CGRect(x: rect.minX + rect.width * 0.42, y: y, width: rect.width * 0.52, height: rowHeight), font: NSFont.monospacedSystemFont(ofSize: max(10, rowHeight * 0.45), weight: .semibold), color: row.2.withAlphaComponent(opacity), alignment: .left, context: context)
+        }
+    }
+
+    private static func drawLowerThird(context: CGContext, size: CGSize, settings: SceneOverlaySettings, accent: NSColor, magenta: NSColor, white: NSColor, opacity: Double) {
+        let rect = CGRect(x: size.width * 0.11, y: size.height * 0.055, width: size.width * 0.58, height: size.height * 0.17)
+        context.setFillColor(NSColor.black.withAlphaComponent(0.22 * opacity).cgColor)
+        context.fill(rect)
+        let thumb = CGRect(x: rect.minX + 12, y: rect.maxY - 70, width: 58, height: 58)
+        context.setFillColor(NSColor.black.withAlphaComponent(0.55 * opacity).cgColor)
+        context.fill(thumb)
+        context.setStrokeColor(accent.cgColor)
+        context.stroke(thumb)
+        drawSceneText("DJ", in: thumb.insetBy(dx: 5, dy: 15), font: NSFont.systemFont(ofSize: 18, weight: .black), color: accent, alignment: .center, context: context)
+        drawSceneText(settings.artist, in: CGRect(x: thumb.maxX + 16, y: rect.maxY - 44, width: rect.width * 0.42, height: 22), font: NSFont.systemFont(ofSize: 18, weight: .bold), color: white, alignment: .left, context: context)
+        drawSceneText(settings.subtitle, in: CGRect(x: thumb.maxX + 16, y: rect.maxY - 66, width: rect.width * 0.48, height: 18), font: NSFont.systemFont(ofSize: 13, weight: .semibold), color: accent, alignment: .left, context: context)
+        let bar = CGRect(x: thumb.maxX + 16, y: rect.minY + 52, width: rect.width * 0.44, height: 4)
+        context.setFillColor(NSColor.white.withAlphaComponent(0.18 * opacity).cgColor)
+        context.fill(bar)
+        context.setFillColor(accent.cgColor)
+        context.fill(CGRect(x: bar.minX, y: bar.minY, width: bar.width * 0.45, height: bar.height))
+        context.setFillColor(NSColor.white.withAlphaComponent(0.90 * opacity).cgColor)
+        context.fillEllipse(in: CGRect(x: bar.minX + bar.width * 0.45 - 4, y: bar.midY - 4, width: 8, height: 8))
+        let labels = ["Bottom", "Top", "Center", "Stereo", "Bars", "Circle"]
+        let chipWidth = min(74, rect.width * 0.11)
+        for (index, label) in labels.enumerated() {
+            let chip = CGRect(x: rect.minX + CGFloat(index) * (chipWidth + 12) + 12, y: rect.minY + 10, width: chipWidth, height: 30)
+            context.setFillColor(NSColor.black.withAlphaComponent(0.35 * opacity).cgColor)
+            context.fill(chip)
+            context.setStrokeColor((index == 0 ? accent : NSColor.white.withAlphaComponent(0.14 * opacity)).cgColor)
+            context.stroke(chip)
+            drawSceneText(label, in: chip.insetBy(dx: 3, dy: 8), font: NSFont.systemFont(ofSize: 9, weight: .semibold), color: NSColor.white.withAlphaComponent(0.74 * opacity), alignment: .center, context: context)
+        }
+    }
+
+    private static func drawSceneText(_ text: String, in rect: CGRect, font: NSFont, color: NSColor, alignment: NSTextAlignment, context: CGContext) {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = alignment
+        paragraph.lineBreakMode = .byTruncatingTail
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.black.withAlphaComponent(0.86)
+        shadow.shadowBlurRadius = max(4, font.pointSize * 0.16)
+        shadow.shadowOffset = CGSize(width: 0, height: -1)
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: color,
+            .paragraphStyle: paragraph,
+            .shadow: shadow
+        ]
+        let previous = NSGraphicsContext.current
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+        NSString(string: text).draw(with: rect, options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: attrs)
+        NSGraphicsContext.current = previous
     }
 
     private static func drawLyrics(context: CGContext, size: CGSize, snapshot: ExportSnapshot, time: Double, duration: Double) {
@@ -2839,12 +3825,49 @@ enum SmokeTest {
     [00:03.80] Eine Runde noch
     """)
 
+    private static let sampleSceneOverlay = SceneOverlaySettings(
+        template: .djLowerThird,
+        artist: "DJ SeN-SiZE",
+        subtitle: "DRUM N BASS IN SEINER LEBENDIGSTEN FORM",
+        bpm: "174 BPM",
+        genre: "NEURO\nBASS",
+        tag: "DNB",
+        showBadges: true,
+        showTitle: true,
+        showStats: true,
+        opacity: 0.86,
+        accentHex: "#00E6FF",
+        magentaHex: "#FF00D6"
+    )
+
     static func runIfRequested() {
         let args = CommandLine.arguments
         let doubleExport = args.contains("--smoke-double-export")
         let maxExport = args.contains("--smoke-max-export")
+        let batchPhase1 = args.contains("--smoke-batch-phase1")
+        let namingArtwork = args.contains("--smoke-naming-artwork")
         let renderTestIndex = args.firstIndex(of: "--render-test-set")
-        guard args.contains("--smoke-export") || doubleExport || maxExport || renderTestIndex != nil else { return }
+        guard args.contains("--smoke-export") || doubleExport || maxExport || batchPhase1 || namingArtwork || renderTestIndex != nil else { return }
+        if batchPhase1 {
+            do {
+                try runBatchPhase1Smoke()
+                print("Batch phase1 smoke passed")
+                exit(0)
+            } catch {
+                fputs("Batch phase1 smoke failed: \(error.localizedDescription)\n", stderr)
+                exit(2)
+            }
+        }
+        if namingArtwork {
+            do {
+                try runNamingArtworkSmoke()
+                print("Naming artwork smoke passed")
+                exit(0)
+            } catch {
+                fputs("Naming artwork smoke failed: \(error.localizedDescription)\n", stderr)
+                exit(2)
+            }
+        }
         let semaphore = DispatchSemaphore(value: 0)
         Task {
             do {
@@ -2891,6 +3914,7 @@ enum SmokeTest {
                         beatFlash: 0.12,
                         lensGlow: 0.24
                     ),
+                    sceneOverlay: args.contains("--with-scene") ? sampleSceneOverlay : SceneOverlaySettings.none,
                     lyricsEnabled: args.contains("--with-lyrics"),
                     lyricsPosition: .aboveWave,
                     lyricsSize: 1.0,
@@ -2917,6 +3941,117 @@ enum SmokeTest {
             semaphore.signal()
         }
         semaphore.wait()
+    }
+
+    private static func runNamingArtworkSmoke() throws {
+        let outputDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("NALA-NamingArtworkSmoke", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+        let imageURL = outputDirectory.appendingPathComponent("name-des-bild-843737.png")
+        try writeSmokeImage(to: imageURL)
+        let snapshot = ExportSnapshot(
+            size: CGSize(width: 3840, height: 2160),
+            canvasFitMode: .fill,
+            visualizerKind: .barsSpectrum,
+            wavePosition: .bottom,
+            stereoMode: .combined,
+            waveDirection: .leftToRight,
+            mirrorMode: .none,
+            colorMode: .manual,
+            colors: [CodableColor(.cyan), CodableColor(.systemPink), CodableColor(.white)],
+            opacity: 0.72,
+            barCount: 96,
+            waveHeight: 0.26,
+            lineWidth: 2,
+            glowStrength: 0.55,
+            smoothing: 0.72,
+            imageZoom: 1,
+            imageRotation: 0,
+            imageOffsetX: 0,
+            imageOffsetY: 0,
+            kenBurnsMode: .zoomIn,
+            kenBurnsStrength: 0.12,
+            kenBurnsSpeed: 0.35,
+            renderMode: .max,
+            effects: RenderEffects.none,
+            sceneOverlay: SceneOverlaySettings.none,
+            lyricsEnabled: false,
+            lyricsPosition: .aboveWave,
+            lyricsSize: 1.0,
+            lyricsOpacity: 0.95,
+            lyricsCues: [],
+            samples: AudioTools.placeholderWaveform(),
+            spectrumFrames: AudioTools.placeholderSpectrumFrames(frameCount: 120, bins: 64)
+        )
+        let defaultName = Exporter.defaultOutputName(for: imageURL)
+        guard defaultName == "name-des-bild-843737" else {
+            throw NSError(domain: "NALA", code: 81, userInfo: [NSLocalizedDescriptionKey: "Bildname wurde nicht als Default-Dateiname übernommen"])
+        }
+        let outputStem = Exporter.outputFileStem(requestedName: defaultName, snapshot: snapshot)
+        guard outputStem == "name-des-bild-843737-16-9-4k" else {
+            throw NSError(domain: "NALA", code: 82, userInfo: [NSLocalizedDescriptionKey: "Format-Suffix falsch: \(outputStem)"])
+        }
+        guard Exporter.canCreateArtworkMetadata(from: imageURL) else {
+            throw NSError(domain: "NALA", code: 83, userInfo: [NSLocalizedDescriptionKey: "MP4-Artwork-Metadaten konnten nicht aus dem Cover erzeugt werden"])
+        }
+    }
+
+    private static func runBatchPhase1Smoke() throws {
+        let outputDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("NALA-BatchPhase1Smoke", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+        let imageURL = outputDirectory.appendingPathComponent("cover.png")
+        let audioURL = outputDirectory.appendingPathComponent("tone.wav")
+        try writeSmokeImage(to: imageURL)
+        try writeSmokeAudio(to: audioURL)
+        var snapshot = ExportSnapshot(
+            size: CGSize(width: 540, height: 960),
+            canvasFitMode: .fill,
+            visualizerKind: .blockBars,
+            wavePosition: .bottom,
+            stereoMode: .leftRight,
+            waveDirection: .leftToRight,
+            mirrorMode: .none,
+            colorMode: .manual,
+            colors: [CodableColor(.cyan), CodableColor(.systemPink), CodableColor(.white)],
+            opacity: 0.72,
+            barCount: 64,
+            waveHeight: 0.22,
+            lineWidth: 2,
+            glowStrength: 0.45,
+            smoothing: 0.62,
+            imageZoom: 1,
+            imageRotation: 0,
+            imageOffsetX: 0,
+            imageOffsetY: 0,
+            kenBurnsMode: .zoomIn,
+            kenBurnsStrength: 0.15,
+            kenBurnsSpeed: 0.35,
+            renderMode: .max,
+            effects: RenderEffects.none,
+            sceneOverlay: SceneOverlaySettings.none,
+            lyricsEnabled: true,
+            lyricsPosition: .aboveWave,
+            lyricsSize: 1.0,
+            lyricsOpacity: 0.95,
+            lyricsCues: LyricsEngine.parse("[00:00.00] Smoke lyric"),
+            samples: AudioTools.placeholderWaveform(),
+            spectrumFrames: AudioTools.placeholderSpectrumFrames(frameCount: 120, bins: 64)
+        )
+        var job = BatchJob(audioURL: audioURL, imageURL: imageURL, outputDirectory: outputDirectory, requestedName: "Batch Phase 1 Test", snapshot: snapshot)
+        guard job.snapshot.renderMode == .max else {
+            throw NSError(domain: "NALA", code: 71, userInfo: [NSLocalizedDescriptionKey: "MAX RenderMode wurde nicht in den Batch übernommen"])
+        }
+        guard job.snapshot.lyricsEnabled, !job.snapshot.lyricsCues.isEmpty else {
+            throw NSError(domain: "NALA", code: 72, userInfo: [NSLocalizedDescriptionKey: "Lyrics wurden nicht in den Batch-Snapshot übernommen"])
+        }
+        job.snapshot.renderMode = .standard
+        guard job.snapshot.renderMode == .standard else {
+            throw NSError(domain: "NALA", code: 74, userInfo: [NSLocalizedDescriptionKey: "Batch-RenderMode konnte nicht pro Job geändert werden"])
+        }
+        snapshot.renderMode = .max
+        job.snapshot.renderMode = snapshot.renderMode
+        guard job.snapshot.renderMode == .max else {
+            throw NSError(domain: "NALA", code: 75, userInfo: [NSLocalizedDescriptionKey: "MAX für alle Batch-Jobs hat nicht gegriffen"])
+        }
     }
 
     private static func runRealAssetTest(args: [String], index: Int) async throws {
@@ -2966,6 +4101,7 @@ enum SmokeTest {
                 beatFlash: 0.10,
                 lensGlow: 0.28
             ),
+            sceneOverlay: args.contains("--with-scene") ? sampleSceneOverlay : SceneOverlaySettings.none,
             lyricsEnabled: withLyrics,
             lyricsPosition: .aboveWave,
             lyricsSize: 1.0,

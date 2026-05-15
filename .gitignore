@@ -8,6 +8,9 @@ DerivedData/
 *.ipa
 *.dSYM.zip
 *.dSYM
+*.dmg
+*.app
+*.zip
 
 # Local release scratch files
 BuildProducts/

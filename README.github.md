@@ -8,22 +8,6 @@ Native macOS music visualizer for turning audio plus cover art into social-ready
 
 ![macOS UI reference](docs/screenshots/macos-ui-reference.png)
 
-## Screenshots
-
-### Main Workflow
-
-The main screen keeps the visualizer presets on the left, live preview in the center, media import and batch queue at the bottom, and detailed render controls in the right sidebar.
-
-![NALA macOS workflow with cover preview, Krasse Waves presets, media tray, batch queue, and MAX render controls](docs/screenshots/macos-v035-batch-max-render.png)
-
-### MAX Render Monitoring
-
-During MAX and batch renders, the current v0.3.8 renderer uses CPU/CoreGraphics composition plus AVFoundation/VideoToolbox output. These screenshots document the observed M4 Max load and are used as a baseline for the planned Metal export compositor.
-
-![CPU monitor during NALA MAX render](docs/screenshots/macos-v035-cpu-monitor.png)
-
-![GPU monitor during NALA MAX render](docs/screenshots/macos-v035-gpu-monitor.png)
-
 ## Current macOS Build
 
 A test DMG is included for quick installation:
@@ -39,10 +23,11 @@ Open the DMG and drag `NALA-AudiO-ViZuLiZeR.app` into `Applications`.
 3. Pick a canvas preset such as `9:16 Vertical` for TikTok/Reels/Shorts or `16:9 Landscape` for YouTube.
 4. Choose a visualizer preset from the left-side `Krasse Waves` library.
 5. Fine-tune transparency, bar count, height, line width, glow, smoothing, color mode, and effects in the right sidebar.
-6. Paste lyrics in the `Lyrics` panel if you want text over the visualizer.
-7. Set the output filename and export folder in the bottom bar.
-8. Choose `Standard`, `Turbo`, or `MAX` render mode.
-9. Click `RENDERN`, `TURBO RENDERN`, or `MAX RENDERN` to create the MP4.
+6. Optional: enable a `DJ Scene / Live HUD` template for BPM badges, artist title, status HUD, lower-third, or fullscreen wave looks.
+7. Paste lyrics in the `Lyrics` panel if you want text over the visualizer.
+8. Set the output filename and export folder in the bottom bar.
+9. Choose `Standard`, `Turbo`, or `MAX` render mode.
+10. Click `RENDERN`, `TURBO RENDERN`, or `MAX RENDERN` to create the MP4.
 
 ## How To Use
 
@@ -99,6 +84,18 @@ The current global effects are:
 
 Each effect can be enabled/disabled and controlled with a strength slider.
 
+### DJ Scene / Live HUD
+
+The `DJ Scene / Live HUD` panel adds exportable scene overlays for live-DJ and promo visuals:
+
+- `DJ HUD`: BPM, genre, tag badges, title block, and optional render/status HUD.
+- `DJ Lower Third`: compact artist/player strip plus visualizer preset chips.
+- `Fullscreen Wave`: minimal performance-style HUD for full-screen wave scenes.
+
+The fields are editable, so labels such as `174 BPM`, `NEURO BASS`, `DNB`, artist name, subtitle, accent color, and magenta highlight can be tailored per project. These overlays are visible in preview and are burned into exported MP4 files.
+
+For DJ artwork, use `16:9 Landscape` with `Fill` or `Stretch` first. `9:16` and `1:1` work as adaptive social variants, but hand-tuning crop/zoom is recommended for best composition.
+
 ### YouTube Music Cover
 
 Enable `Still Icon aktivieren` to use a specific still cover/thumbnail image. The app can also export a still-cover PNG next to the rendered MP4.
@@ -108,6 +105,7 @@ Enable `Still Icon aktivieren` to use a specific still cover/thumbnail image. Th
 The `Lyrics` panel supports:
 
 - Copy/paste plain lyrics.
+- Drag and drop or `Datei laden` import for `.txt`, `.md`, `.lrc`, and `.srt`.
 - Timed `.lrc` style text such as `[00:12.30] line`.
 - SRT-style timecode blocks when pasted as text.
 - Optional metadata scan via `Aus Metadaten`.
@@ -120,13 +118,13 @@ When plain untimed lyrics are pasted, the app distributes visible lines across t
 
 The export bar lets you choose:
 
-- output filename, with optional automatic default from the first imported image
+- output filename
 - output folder
 - render mode: `Standard`, `Turbo`, or `MAX`
 - render start via `RENDERN`, `TURBO RENDERN`, or `MAX RENDERN`
-- optional `Zur Batch` to queue the current setup for later batch rendering
+- optional `Zur Batch` to queue the current setup for later batch rendering; queued media and lyrics are then cleared so the next job can be prepared cleanly
 
-The exporter creates H.264/AAC MP4 files, appends a format suffix such as `-9-16`, `-16-9`, or `-16-9-4k`, writes the selected cover as MP4 artwork metadata where supported by the player, and automatically avoids overwriting by adding suffixes such as `-2`, `-3`, etc.
+The exporter creates H.264/AAC MP4 files and automatically avoids overwriting by adding suffixes such as `-2`, `-3`, etc.
 
 Render modes:
 
@@ -136,6 +134,8 @@ Render modes:
 
 The batch queue works like a compact HandBrake-style job list: prepare a setup, click `Zur Batch`, inspect queued job details, change a queued job between `Standard`, `Turbo`, and `MAX`, move jobs left/right, set `MAX` for every queued job, then start or stop the queue. On stronger Macs the `2 Pipelines` switch can render two queued jobs at the same time; leave it off when maximum UI responsiveness is more important than throughput.
 
+For faster setup, the first imported image can become the default output name automatically. Exported MP4s append a format suffix such as `-9-16`, `-16-9`, or `-16-9-4k`, and the selected cover image is written as MP4 artwork metadata where supported by the player.
+
 ## Performance Notes
 
 The current app intentionally prioritizes stable output over maximum hardware saturation:
@@ -144,7 +144,6 @@ The current app intentionally prioritizes stable output over maximum hardware sa
 - Frame composition is still mostly CPU/CoreGraphics based, so the GPU can look underused even while the export is working.
 - `200% CPU` on macOS means roughly two full CPU cores, not 200% of the whole M-series chip.
 - `MAX` mode increases export work to 60 FPS and higher bitrate, but it is not a true Metal export compositor yet.
-- `2 Pipelines` improves total batch throughput by running two independent exports at once on strong Macs, but it is still not the same as a Metal GPU compositor.
 - Full Metal export rendering is planned for Phase 2, where GPU utilization should become much more visible.
 
 ## What It Does
@@ -161,17 +160,17 @@ The current app intentionally prioritizes stable output over maximum hardware sa
 - Visualizers: Bottom, Top, Center Wave, Stereo Left/Right, Mid-Outward, Vertical Side Waves, Bars, Block Stereo Bars, Circle, Neon FFT Wave, and Frequency Mesh.
 - Left-side visualizer preset library with mini FFT tiles for Mesh Storm, Liquid Ice, Sub Blocks, Circle Halo, Stereo Razor, Side Walls, Mid Out, Pulse Core, Ghost Low, and Trap Bars.
 - Waveform controls: position, stereo mode, direction, mirroring, transparency, bar count, height, line width, glow, and smoothing.
+- DJ Scene / Live HUD templates with BPM/genre badges, title block, status HUD, lower-third, and fullscreen wave overlay.
 - Color modes: Intelligent Match, Extreme Contrast, Colorful, Manual HEX, and Low Contrast.
 - Ken Burns: Zoom In, Zoom Out, Pan Left/Right/Up/Down, and Smooth Drift.
 - Effects: Bass Shake, Zoom Punch, RGB Split, Glitch, Particles, Beat Flash, and Lens Glow.
 - YouTube Music Still Icon: choose a cover image or use the current image as cover.
 - Lyrics overlay: copy/paste plain lyrics, LRC, or SRT; optional embedded metadata scan; position above/below wave or top/center/bottom.
 - Adaptive FFT spectrum frames for smoother bars, circles, block visuals, and mesh waves.
-- Export naming with automatic filename sanitizing, first-image default naming, and format suffix handling such as `-16-9-4k`.
-- MP4 cover/artwork metadata from the selected image, plus first-frame cover behavior through the rendered visual background.
+- Export naming with automatic filename sanitizing and suffix handling.
 - Render modes: Standard, Turbo, and MAX.
 - MAX render path targets 60 FPS H.264 output.
-- Batch queue for multiple queued exports from different current setups, including optional two-pipeline rendering on strong Macs.
+- Batch queue for multiple queued exports from different current setups.
 - Export MP4 through macOS AVFoundation / VideoToolbox with H.264 video and AAC audio.
 - Export smoke tests for generated assets and MP4-as-audio-source workflows.
 
@@ -208,12 +207,6 @@ Basic generated asset export:
 .build/release/NALA-AudiO-ViZuLiZeR --smoke-export
 ```
 
-Naming/artwork smoke test:
-
-```bash
-.build/release/NALA-AudiO-ViZuLiZeR --smoke-naming-artwork
-```
-
 Double export including MP4 audio-track reuse:
 
 ```bash
@@ -230,6 +223,12 @@ MAX-mode smoke export with lyrics overlay:
 
 ```bash
 .build/release/NALA-AudiO-ViZuLiZeR --smoke-max-export --with-lyrics
+```
+
+Scene overlay smoke export with lyrics:
+
+```bash
+.build/release/NALA-AudiO-ViZuLiZeR --smoke-export --with-scene --with-lyrics
 ```
 
 Render a short real-asset test:
